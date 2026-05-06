@@ -33,7 +33,7 @@ HIGH_ACCURACY_SUMMARY.md
 cleaned_dataset_1500.xlsx
 .devcontainer/
 
-# Exclude original app directory (we're using api/)
+# Exclude original app directory (api/ is the Vercel entry point)
 app/
-model/
-utils/
+
+# NOTE: model/ and utils/ must NOT be ignored — api/index.py imports from them
