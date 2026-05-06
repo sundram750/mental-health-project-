@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mental Health Monitoring System</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Navigation Bar -->
+        <nav class="navbar">
+            <div class="navbar-content">
+                <a href="/" class="nav-link active">Home</a>
+                <a href="/about" class="nav-link">About the System</a>
+            </div>
+        </nav>
+
+        <!-- Premium Hero -->
+        <header class="hero">
+            <div class="hero-inner">
+                <div class="hero-left">
+                    <h1 class="hero-title">NeuroPulse</h1>
+                    <p class="hero-sub">AI Mental Health Monitoring System</p>
+                    <div class="hero-cta">
+                        <a href="#predictionForm" class="cta-btn">Get Started</a>
+                        <a href="/about" class="cta-link">Learn more</a>
+                    </div>
+                </div>
+                <div class="hero-right">
+                    <div class="neural-bg" aria-hidden="true"></div>
+                    <!-- Glowing neural brain SVG illustration -->
+                    <div class="brain-wrap">
+                        <!-- Brain image with animated sparkles -->
+                        <div class="brain-wrapper">
+                            <img src="{{ url_for('static', filename='brain.png') }}" alt="Neural brain" class="neural-brain brain-bounce" style="max-width: 320px; height: auto; display: block;">
+                            <div class="sparkle-particle p1"></div>
+                            <div class="sparkle-particle p2"></div>
+                            <div class="sparkle-particle p3"></div>
+                            <div class="sparkle-particle p4"></div>
+                            <div class="sparkle-particle p5"></div>
+                            <div class="sparkle-particle p6"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Input Section -->
+            <section class="input-section">
+                <div class="section-card">
+                    <h2>Let's understand your mental well-being together</h2>
+                    
+                    <form id="predictionForm">
+                        <!-- Physiological Inputs -->
+                        <fieldset>
+                            <legend>Physiological Metrics</legend>
+                            
+                            <!-- 3-Column Grid for Primary Metrics -->
+                            <div class="phys-grid-3col">
+                                <!-- Heart Rate Card -->
+                                <div class="metric-card">
+                                    <div class="metric-icon">
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12.1 21.35l-1.1-1.01C5.14 15.24 2 12.39 2 8.99 2 6.42 4.24 4.5 6.7 4.5c1.54 0 3.04.99 3.68 2.36h.25C13.26 5.49 14.76 4.5 16.3 4.5 18.76 4.5 21 6.42 21 8.99c0 3.4-3.14 6.25-8.99 11.35l-1.91 1.02z" stroke="#e74c3c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </div>
+                                    <label for="heartRate" class="metric-label">Heart Rate</label>
+                                    <input type="number" id="heartRate" name="heart_rate" 
+                                           min="40" max="200" value="75" class="metric-input" required>
+                                    <div class="metric-display-value"><span class="value-display">75</span></div>
+                                </div>
+
+                                <!-- HRV Card -->
+                                <div class="metric-card">
+                                    <div class="metric-icon">
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 12c3 0 3-8 6-8s3 8 6 8 3-8 6-8 3 8 6 8" stroke="#3498db" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </div>
+                                    <label for="hrv" class="metric-label">HRV</label>
+                                    <input type="number" id="hrv" name="hrv" 
+                                           min="0" max="200" value="50" step="0.1" class="metric-input" required>
+                                    <div class="metric-display-value"><span class="value-display">50</span></div>
+                                </div>
+
+                                <!-- Respiration Rate Card -->
+                                <div class="metric-card">
+                                    <div class="metric-icon">
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 3v7" stroke="#27ae60" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 7c0 5 2 7 6 7s6-2 6-7" stroke="#27ae60" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </div>
+                                    <label for="respiration" class="metric-label">Respiration</label>
+                                    <input type="number" id="respiration" name="respiration" 
+                                           min="8" max="40" value="16" step="0.1" class="metric-input" required>
+                                    <div class="metric-display-value"><span class="value-display">16</span></div>
+                                </div>
+                            </div>
+
+                            <!-- 3-Column Grid for Secondary Metrics -->
+                            <div class="phys-grid-3col">
+                                <!-- Skin Temperature Card -->
+                                <div class="metric-card">
+                                    <div class="metric-icon">
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 14.76V5a2 2 0 10-4 0v9.76a4 4 0 104 0z" stroke="#f39c12" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </div>
+                                    <label for="skinTemp" class="metric-label">Skin Temp</label>
+                                    <input type="number" id="skinTemp" name="skin_temp" 
+                                           min="32" max="38" value="35.5" step="0.1" class="metric-input" required>
+                                    <div class="metric-display-value"><span class="value-display">35.5</span></div>
+                                </div>
+
+                                <!-- BP Systolic Card -->
+                                <div class="metric-card">
+                                    <div class="metric-icon">
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="6" width="20" height="12" rx="2" stroke="#c0392b" stroke-width="1.5"/><path d="M7 10h3v4H7z" stroke="#c0392b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </div>
+                                    <label for="bpSystolic" class="metric-label">BP Systolic</label>
+                                    <input type="number" id="bpSystolic" name="bp_systolic" 
+                                           min="80" max="200" value="120" class="metric-input" required>
+                                    <div class="metric-display-value"><span class="value-display">120</span></div>
+                                </div>
+
+                                <!-- BP Diastolic Card -->
+                                <div class="metric-card">
+                                    <div class="metric-icon">
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="6" width="20" height="12" rx="2" stroke="#8b0000" stroke-width="1.5"/><path d="M14 10h3v4h-3z" stroke="#8b0000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </div>
+                                    <label for="bpDiastolic" class="metric-label">BP Diastolic</label>
+                                    <input type="number" id="bpDiastolic" name="bp_diastolic" 
+                                           min="40" max="120" value="80" class="metric-input" required>
+                                    <div class="metric-display-value"><span class="value-display">80</span></div>
+                                </div>
+                            </div>
+                        </fieldset>
+
+                        <!-- Psychological Questionnaire -->
+                        <fieldset>
+                            <legend>Psychological Assessment (1-5 Scale)</legend>
+                            
+                            <div class="form-group questionnaire">
+                                <label>Are you feeling mentally tired?</label>
+                                <div class="slider-container">
+                                    <input type="range" id="mentalTire" min="1" max="5" value="3" 
+                                           class="slider" name="cognitive_state">
+                                    <div class="slider-labels">
+                                        <span>Not at All</span>
+                                        <span>Extremely</span>
+                                    </div>
+                                    <span class="value-display">3</span>
+                                </div>
+                            </div>
+
+                            <!-- Updated questionnaire as requested -->
+                            <div class="form-group questionnaire">
+                                <label>How would you describe your current emotional state?</label>
+                                <div class="slider-container">
+                                    <input type="range" id="emotionalPrimary" min="1" max="5" value="3" class="slider" name="emotional_state_primary">
+                                    <div class="slider-labels">
+                                        <span>Very Calm</span>
+                                        <span>Very Anxious</span>
+                                    </div>
+                                    <span class="value-display">3</span>
+                                </div>
+                            </div>
+
+                            <div class="form-group questionnaire">
+                                <label>How well are you able to concentrate at this moment?</label>
+                                <div class="slider-container">
+                                    <input type="range" id="concentration" min="1" max="5" value="3" class="slider" name="concentration">
+                                    <div class="slider-labels">
+                                        <span>Poor</span>
+                                        <span>Excellent</span>
+                                    </div>
+                                    <span class="value-display">3</span>
+                                </div>
+                            </div>
+
+                            <div class="form-group questionnaire">
+                                <label>Are you feeling mentally overloaded?</label>
+                                <div class="slider-container">
+                                    <input type="range" id="overloaded" min="1" max="5" value="3" class="slider" name="overloaded">
+                                    <div class="slider-labels">
+                                        <span>No</span>
+                                        <span>Yes</span>
+                                    </div>
+                                    <span class="value-display">3</span>
+                                </div>
+                            </div>
+
+                            <div class="form-group questionnaire">
+                                <label>How mentally tired do you feel right now?</label>
+                                <div class="slider-container">
+                                    <input type="range" id="mentalTired" min="1" max="5" value="3" class="slider" name="mental_tired">
+                                    <div class="slider-labels">
+                                        <span>Not tired</span>
+                                        <span>Extremely tired</span>
+                                    </div>
+                                    <span class="value-display">3</span>
+                                </div>
+                            </div>
+
+                            <div class="form-group questionnaire">
+                                <label>How would you describe your current emotional state?</label>
+                                <div class="slider-container">
+                                    <input type="range" id="emotionalSecondary" min="1" max="5" value="3" class="slider" name="emotional_state_secondary">
+                                    <div class="slider-labels">
+                                        <span>Very Calm</span>
+                                        <span>Very Anxious</span>
+                                    </div>
+                                    <span class="value-display">3</span>
+                                </div>
+                            </div>
+                        </fieldset>
+
+                        <!-- Submit Button -->
+                        <button type="submit" class="submit-btn">
+                            🔍 Analyze Stress Level
+                        </button>
+                    </form>
+                </div>
+            </section>
+
+                <!-- Results Section - Redesigned per dissertation structure -->
+                <section id="resultsSection" class="results-section" style="display: none;">
+
+                    <!-- CONDITION -->
+                    <div class="section-card condition-card">
+                        <h2>1️⃣ CONDITION</h2>
+                        <div class="condition-status-grid">
+                            <div class="status-card" id="status-calm">
+                                <div class="status-indicator"></div>
+                                <div class="status-text"><strong>Calm</strong><div class="status-desc">Baseline</div></div>
+                            </div>
+                            <div class="status-card" id="status-moderate">
+                                <div class="status-indicator"></div>
+                                <div class="status-text"><strong>Moderate</strong><div class="status-desc">Monitor</div></div>
+                            </div>
+                            <div class="status-card" id="status-stressed">
+                                <div class="status-indicator"></div>
+                                <div class="status-text"><strong>Stressed</strong><div class="status-desc">Action advised</div></div>
+                            </div>
+                        </div>
+                        <div class="condition-display">
+                            <span id="conditionLabel" class="condition-label">--</span>
+                        </div>
+                    </div>
+
+                    <!-- MENTAL LOAD INDEX -->
+                    <div class="section-card mli-card">
+                        <h2>2️⃣ Mental Load Index (0–100)</h2>
+                        <div class="mli-display">
+                            <div class="gauge-wrap">
+                                <svg class="gauge" viewBox="0 0 120 120">
+                                    <defs>
+                                        <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                            <stop offset="0%" stop-color="#10b981" />
+                                            <stop offset="50%" stop-color="#f59e0b" />
+                                            <stop offset="100%" stop-color="#ef4444" />
+                                        </linearGradient>
+                                    </defs>
+                                    <circle class="gauge-bg" cx="60" cy="60" r="44" stroke-width="12" />
+                                    <circle class="gauge-progress" id="gaugeProgress" cx="60" cy="60" r="44" stroke-width="12" stroke-linecap="round" transform="rotate(-90 60 60)" />
+                                    <text x="60" y="62" text-anchor="middle" class="gauge-value" id="mliGaugeValue">--</text>
+                                </svg>
+                                <div class="gauge-pulse" id="gaugePulse"></div>
+                            </div>
+                            <div class="mli-meta">
+                                <div class="mli-interpretation" id="mliInterpret">--</div>
+                                <div class="mli-category" id="mliCategory">Category: --</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ADVISORY (Only advice, no scores) -->
+                    <div class="section-card advisory-card">
+                        <h2>3️⃣ Advisory</h2>
+                        <div id="advisoryList" class="advisory-list"></div>
+                    </div>
+
+                    <!-- STRESS TREND MONITORING -->
+                    <div class="section-card trend-card">
+                        <h2>4️⃣ Stress Trend Monitoring</h2>
+                        <div class="trend-tracks">
+                            <strong>Tracks:</strong>
+                            <ul>
+                                <li>Mental Load fluctuation</li>
+                                <li>Emotional stability changes</li>
+                                <li>Cognitive fatigue patterns</li>
+                            </ul>
+                        </div>
+                        <div id="trendChart" class="chart-placeholder"></div>
+                        <p id="trendInsight" class="trend-insight"></p>
+                        <p id="trendOutput" class="trend-output"></p>
+                        <div class="history-actions">
+                            <button id="downloadHistoryBtn" class="small-btn">Download History (CSV)</button>
+                            <button id="clearHistoryBtn" class="small-btn">Clear History</button>
+                        </div>
+                    </div>
+
+                    <!-- EARLY WARNING PREDICTION -->
+                    <div class="section-card warning-card">
+                        <h2>5️⃣ Early Warning Prediction</h2>
+                        <div class="warning-content">
+                            <p id="warningMessage" class="warning-message">--</p>
+                        </div>
+                    </div>
+
+                    <!-- PERSONALIZED RECOMMENDATION (Tier Model) -->
+                    <div class="section-card recommendations-card">
+                        <h2>6️⃣ Personalized Recommendation System</h2>
+
+                        <div class="recommendation-cards">
+                            <div class="recommendation-card rec-natural">
+                                <div class="rec-tag"><span class="icon-leaf">🌿</span></div>
+                                <h4>Natural Interventions</h4>
+                                <div id="naturalInterventions" class="rec-list"></div>
+                                <p class="rec-desc">Gentle, non-pharmacological options to lower cognitive load.</p>
+                            </div>
+
+                            <div class="recommendation-card rec-otc">
+                                <div class="rec-tag"><span class="icon-pill">💊</span></div>
+                                <h4>OTC Options</h4>
+                                <div id="otcOptions" class="rec-list"></div>
+                                <p class="rec-desc">Short-term over-the-counter supports where appropriate.</p>
+                            </div>
+
+                            <div class="recommendation-card rec-professional">
+                                <div class="rec-tag"><span class="icon-brain">🧠</span></div>
+                                <h4>Professional Referral</h4>
+                                <div id="professionalServices" class="rec-list"></div>
+                                <p class="rec-desc">When clinical assessment or specialist care is recommended.</p>
+                            </div>
+                        </div>
+
+                        <div class="medical-disclaimer">
+                            This system does not replace professional medical diagnosis.
+                        </div>
+                    </div>
+
+                </section>
+
+            <!-- Loading Indicator -->
+            <div id="loadingIndicator" class="loading-indicator" style="display: none;">
+                <div class="spinner"></div>
+                <p>Analyzing your data...</p>
+            </div>
+
+            <!-- Error Message -->
+            <div id="errorMessage" class="error-message" style="display: none;"></div>
+        </main>
+
+        <!-- Footer: emoji icons per user request -->
+        <footer class="footer">
+            <div class="footer-icons" role="img" aria-label="icons: brain, medical, chart">
+                <div class="footer-icon fw-brain" aria-hidden="true">
+                    <span class="emoji">🧠</span>
+                </div>
+
+                <div class="footer-icon fw-med" aria-hidden="true">
+                    <span class="emoji">⚕️</span>
+                </div>
+
+                <div class="footer-icon fw-chart" aria-hidden="true">
+                    <span class="emoji">📊</span>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

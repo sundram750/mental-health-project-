@@ -1,0 +1,72 @@
+# 🚀 Quick Start - Run the Website
+
+## Two Easy Ways to Launch the Dashboard
+
+### **Option 1: Batch File (Simplest - Windows Only)**
+1. **Double-click** `RUN_WEBSITE.bat`
+2. The website opens automatically at `http://127.0.0.1:5000`
+3. Server runs in background
+
+**Pros:** Super simple, no Python knowledge needed  
+**Cons:** Windows only
+
+---
+
+### **Option 2: Python Script (Recommended - All Platforms)**
+1. **Double-click** `run_website.py` 
+2. Or run in terminal: `python run_website.py`
+3. The website opens automatically at `http://127.0.0.1:5000`
+
+**Pros:** Works on Windows, Mac, Linux; shows detailed status  
+**Cons:** Requires Python installed
+
+---
+
+## ✋ Manual Way (If Launchers Don't Work)
+
+```bash
+cd "c:\Users\DELL\OneDrive\Desktop\model 3 vs\mental_health_project"
+python app/app_enhanced.py
+```
+
+Then open browser: `http://127.0.0.1:5000`
+
+---
+
+## 📊 Dashboard Features
+
+Once the website opens, you can:
+
+✅ **Enter Health Metrics** (8 inputs)
+- Heart Rate, HRV, Respiration, Skin Temperature
+- Blood Pressure (Systolic & Diastolic)
+- Cognitive State, Emotional State
+
+✅ **Get Predictions** with 90.28% accuracy
+- Stress Level classification
+- Confidence score
+- Probability breakdown
+- Personalized recommendations
+
+---
+
+## 🛑 Stop the Server
+
+Close the Flask server window that opens in the background, or:
+- Press `Ctrl+C` in any terminal running the server
+- Task Manager → End `python.exe` process
+
+---
+
+## ⚙️ Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| Port 5000 in use | Change port in `app/app_enhanced.py` line 291 |
+| Python not found | Install Python 3.9+ from python.org |
+| Dependencies missing | Run `pip install -r requirements.txt` |
+| Browser doesn't open | Manually visit `http://127.0.0.1:5000` |
+
+---
+
+**🎉 That's it! Enjoy the Mental Health Monitoring Dashboard!**
