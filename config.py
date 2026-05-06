@@ -1,10 +1,10 @@
-# Configuration file for Mental Health Monitoring System
+import os
 
 # Flask Configuration
-FLASK_ENV = 'development'
-FLASK_DEBUG = True
-FLASK_HOST = '127.0.0.1'
-FLASK_PORT = 5000
+FLASK_ENV = os.environ.get('FLASK_ENV', 'production')
+FLASK_DEBUG = os.environ.get('FLASK_DEBUG', 'False').lower() in ('true', '1', 'yes')
+FLASK_HOST = os.environ.get('HOST', '0.0.0.0')
+FLASK_PORT = int(os.environ.get('PORT', 5000))
 
 # Model Configuration
 MODEL_PATH = 'model/mental_health_model.pkl'

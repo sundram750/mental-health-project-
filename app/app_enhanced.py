@@ -38,17 +38,17 @@ try:
     model = joblib.load(os.path.join(project_dir, 'model/mental_health_model.pkl'))
     scaler = joblib.load(os.path.join(project_dir, 'model/mental_health_model_scaler.pkl'))
     feature_names = joblib.load(os.path.join(project_dir, 'model/mental_health_model_features.pkl'))
-    print(f"✓ Model loaded (Voting Ensemble, 90.28% accuracy)")
-    print(f"✓ Features: {len(feature_names)} total")
+    print("[OK] Model loaded (Voting Ensemble, 90.28% accuracy)")
+    print("[OK] Features: {} total".format(len(feature_names)))
     MODEL_READY = True
 except Exception as e:
-    print(f"✗ Error loading model: {e}")
-    print(f"⚠ WARNING: Model loading failed. Predictions will not be available.")
+    print("[ERROR] Error loading model: {}".format(e))
+    print("[WARN] Model loading failed. Predictions will not be available.")
     MODEL_READY = False
 
 # Initialize Recommendation Engine
 recommendation_engine = RecommendationEngine()
-print("✓ Recommendation Engine initialized")
+print("[OK] Recommendation Engine initialized")
 
 # Session Storage
 user_sessions = {}
@@ -449,20 +449,23 @@ def server_error(error):
 
 if __name__ == '__main__':
     print("\n" + "="*80)
-    print("🧠 MENTAL HEALTH MONITORING SYSTEM - LAUNCHING")
+    print("MENTAL HEALTH MONITORING SYSTEM - LAUNCHING")
     print("="*80)
     if MODEL_READY:
-        print(f"\n✓ Model Accuracy: 90.28%")
-        print(f"✓ Model Type: Voting Ensemble (5 algorithms)")
-        print(f"✓ Features: {len(feature_names) if feature_names else 16}")
-        print(f"✓ Training Samples: 1,200")
-        print(f"✓ Cross-Val Score: 85.00% (±3.16%)")
+        print("\n[OK] Model Accuracy: 90.28%")
+        print("[OK] Model Type: Voting Ensemble (5 algorithms)")
+        print("[OK] Features: {}".format(len(feature_names) if feature_names else 16))
+        print("[OK] Training Samples: 1,200")
+        print("[OK] Cross-Val Score: 85.00% (+/-3.16%)")
     else:
-        print(f"\n⚠ WARNING: Model not ready. Please check model files and scikit-learn version.")
-        print(f"✓ Recommendation Engine: Active")
-        print(f"✓ Advisory System: Active")
-    print(f"\n🌐 Starting web server...")
-    print(f"📱 Access at: http://127.0.0.1:5000")
-    print(f"\n{'='*80}\n")
+        print("\n[WARN] Model not ready. Please check model files and scikit-learn version.")
+        print("[OK] Recommendation Engine: Active")
+        print("[OK] Advisory System: Active")
+    print("\n[*] Starting web server...")
+    port = int(os.environ.get('PORT', 5000))
+    print("[*] Access at: http://0.0.0.0:{}".format(port))
+    print("\n" + "="*80 + "\n")
     
-    app.run(debug=True, host='127.0.0.1', port=5000, use_reloader=False)
+    debug_mode = os.environ.get('FLASK_DEBUG', 'False').lower() in ('true', '1', 'yes')
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=debug_mode, host='0.0.0.0', port=port, use_reloader=False)

@@ -1,0 +1,6 @@
+# Git LFS - Large model files ko track karne ke liye
+# Run: git lfs install  (ek baar)
+# Then: git add .gitattributes && git add model/*.pkl
+*.pkl filter=lfs diff=lfs merge=lfs -text
+*.h5 filter=lfs diff=lfs merge=lfs -text
+*.xlsx filter=lfs diff=lfs merge=lfs -text

@@ -12,10 +12,17 @@ from pathlib import Path
 class MentalHealthPredictor:
     """Handles model loading and making predictions."""
     
-    def __init__(self, model_path='model/mental_health_model.pkl',
-                 scaler_path='model/mental_health_model_scaler.pkl',
-                 encoder_path='model/mental_health_model_encoder.pkl',
-                 features_path='model/mental_health_model_features.pkl'):
+    # Compute absolute paths relative to this file's directory
+    _model_dir = os.path.dirname(os.path.abspath(__file__))
+    _DEFAULT_MODEL_PATH = os.path.join(_model_dir, 'mental_health_model.pkl')
+    _DEFAULT_SCALER_PATH = os.path.join(_model_dir, 'mental_health_model_scaler.pkl')
+    _DEFAULT_ENCODER_PATH = os.path.join(_model_dir, 'mental_health_model_encoder.pkl')
+    _DEFAULT_FEATURES_PATH = os.path.join(_model_dir, 'mental_health_model_features.pkl')
+
+    def __init__(self, model_path=None,
+                 scaler_path=None,
+                 encoder_path=None,
+                 features_path=None):
         """
         Initialize predictor with pre-trained model and preprocessing objects.
         
@@ -25,10 +32,10 @@ class MentalHealthPredictor:
             encoder_path (str): Path to label encoder pickle file
             features_path (str): Path to feature names pickle file
         """
-        self.model_path = model_path
-        self.scaler_path = scaler_path
-        self.encoder_path = encoder_path
-        self.features_path = features_path
+        self.model_path = model_path or self._DEFAULT_MODEL_PATH
+        self.scaler_path = scaler_path or self._DEFAULT_SCALER_PATH
+        self.encoder_path = encoder_path or self._DEFAULT_ENCODER_PATH
+        self.features_path = features_path or self._DEFAULT_FEATURES_PATH
         
         self.model = None
         self.scaler = None
