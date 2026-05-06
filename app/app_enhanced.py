@@ -29,6 +29,11 @@ app = Flask(__name__,
 
 # Load Model Components
 print("\n[Loading Model Components...]")
+model = None
+scaler = None
+feature_names = None
+MODEL_READY = False
+
 try:
     model = joblib.load(os.path.join(project_dir, 'model/mental_health_model.pkl'))
     scaler = joblib.load(os.path.join(project_dir, 'model/mental_health_model_scaler.pkl'))
@@ -38,6 +43,7 @@ try:
     MODEL_READY = True
 except Exception as e:
     print(f"✗ Error loading model: {e}")
+    print(f"⚠ WARNING: Model loading failed. Predictions will not be available.")
     MODEL_READY = False
 
 # Initialize Recommendation Engine
@@ -445,11 +451,16 @@ if __name__ == '__main__':
     print("\n" + "="*80)
     print("🧠 MENTAL HEALTH MONITORING SYSTEM - LAUNCHING")
     print("="*80)
-    print(f"\n✓ Model Accuracy: 90.28%")
-    print(f"✓ Model Type: Voting Ensemble (5 algorithms)")
-    print(f"✓ Features: {len(feature_names) if feature_names else 16}")
-    print(f"✓ Training Samples: 1,200")
-    print(f"✓ Cross-Val Score: 85.00% (±3.16%)")
+    if MODEL_READY:
+        print(f"\n✓ Model Accuracy: 90.28%")
+        print(f"✓ Model Type: Voting Ensemble (5 algorithms)")
+        print(f"✓ Features: {len(feature_names) if feature_names else 16}")
+        print(f"✓ Training Samples: 1,200")
+        print(f"✓ Cross-Val Score: 85.00% (±3.16%)")
+    else:
+        print(f"\n⚠ WARNING: Model not ready. Please check model files and scikit-learn version.")
+        print(f"✓ Recommendation Engine: Active")
+        print(f"✓ Advisory System: Active")
     print(f"\n🌐 Starting web server...")
     print(f"📱 Access at: http://127.0.0.1:5000")
     print(f"\n{'='*80}\n")
