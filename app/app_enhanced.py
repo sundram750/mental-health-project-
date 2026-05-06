@@ -6,6 +6,8 @@ With 90.28% Accurate Voting Ensemble Model
 from flask import Flask, render_template, request, jsonify, send_from_directory
 import sys
 import os
+import errno
+import socket
 from datetime import datetime, timedelta
 import json
 import numpy as np
@@ -16,8 +18,9 @@ app_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(app_dir)
 sys.path.insert(0, project_dir)
 
-import joblib
 import pandas as pd
+
+from model.predictor import MentalHealthPredictor
 
 # Import recommendation engine
 from utils.recommendation_engine import RecommendationEngine
@@ -27,28 +30,50 @@ app = Flask(__name__,
             template_folder=os.path.join(app_dir, 'templates'),
             static_folder=os.path.join(app_dir, 'static'))
 
+DEFAULT_HOST = os.environ.get('FLASK_HOST', '127.0.0.1')
+DEFAULT_PORT = int(os.environ.get('FLASK_PORT', os.environ.get('PORT', 5000)))
+
+
+def find_free_port(host, start_port, max_port=None):
+    if max_port is None:
+        max_port = start_port + 20
+    for port in range(start_port, max_port + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((host, port))
+                return port
+            except OSError as exc:
+                if exc.errno in (errno.EADDRINUSE, errno.EACCES):
+                    continue
+                raise
+    raise OSError(f"No available port found in range {start_port}-{max_port}")
+
 # Load Model Components
 print("\n[Loading Model Components...]")
+predictor = None
 model = None
 scaler = None
 feature_names = None
 MODEL_READY = False
 
 try:
-    model = joblib.load(os.path.join(project_dir, 'model/mental_health_model.pkl'))
-    scaler = joblib.load(os.path.join(project_dir, 'model/mental_health_model_scaler.pkl'))
-    feature_names = joblib.load(os.path.join(project_dir, 'model/mental_health_model_features.pkl'))
-    print("[OK] Model loaded (Voting Ensemble, 90.28% accuracy)")
-    print("[OK] Features: {} total".format(len(feature_names)))
+    predictor = MentalHealthPredictor()
+    model = predictor.model
+    scaler = predictor.scaler
+    feature_names = predictor.feature_names
+    print(f"✓ Model loaded (Voting Ensemble, 90.28% accuracy)")
+    print(f"✓ Features: {len(feature_names)} total")
     MODEL_READY = True
 except Exception as e:
-    print("[ERROR] Error loading model: {}".format(e))
-    print("[WARN] Model loading failed. Predictions will not be available.")
+    print(f"✗ Error loading model: {e}")
+    print(f"⚠ WARNING: Model loading failed. Predictions will not be available.")
+    predictor = None
     MODEL_READY = False
 
 # Initialize Recommendation Engine
 recommendation_engine = RecommendationEngine()
-print("[OK] Recommendation Engine initialized")
+print("✓ Recommendation Engine initialized")
 
 # Session Storage
 user_sessions = {}
@@ -449,23 +474,29 @@ def server_error(error):
 
 if __name__ == '__main__':
     print("\n" + "="*80)
-    print("MENTAL HEALTH MONITORING SYSTEM - LAUNCHING")
+    print("🧠 MENTAL HEALTH MONITORING SYSTEM - LAUNCHING")
     print("="*80)
     if MODEL_READY:
-        print("\n[OK] Model Accuracy: 90.28%")
-        print("[OK] Model Type: Voting Ensemble (5 algorithms)")
-        print("[OK] Features: {}".format(len(feature_names) if feature_names else 16))
-        print("[OK] Training Samples: 1,200")
-        print("[OK] Cross-Val Score: 85.00% (+/-3.16%)")
+        print(f"\n✓ Model Accuracy: 90.28%")
+        print(f"✓ Model Type: Voting Ensemble (5 algorithms)")
+        print(f"✓ Features: {len(feature_names) if feature_names else 16}")
+        print(f"✓ Training Samples: 1,200")
+        print(f"✓ Cross-Val Score: 85.00% (±3.16%)")
     else:
-        print("\n[WARN] Model not ready. Please check model files and scikit-learn version.")
-        print("[OK] Recommendation Engine: Active")
-        print("[OK] Advisory System: Active")
-    print("\n[*] Starting web server...")
-    port = int(os.environ.get('PORT', 5000))
-    print("[*] Access at: http://0.0.0.0:{}".format(port))
-    print("\n" + "="*80 + "\n")
+        print(f"\n⚠ WARNING: Model not ready. Please check model files and scikit-learn version.")
+        print(f"✓ Recommendation Engine: Active")
+        print(f"✓ Advisory System: Active")
+
+    host = os.environ.get('FLASK_HOST', DEFAULT_HOST)
+    start_port = int(os.environ.get('FLASK_PORT', os.environ.get('PORT', DEFAULT_PORT)))
+    try:
+        listen_port = find_free_port(host, start_port, start_port + 20)
+    except OSError as exc:
+        print(f"✗ Could not acquire a free port: {exc}")
+        sys.exit(1)
+
+    print(f"\n🌐 Starting web server...")
+    print(f"📱 Access at: http://{host}:{listen_port}")
+    print(f"\n{'='*80}\n")
     
-    debug_mode = os.environ.get('FLASK_DEBUG', 'False').lower() in ('true', '1', 'yes')
-    port = int(os.environ.get('PORT', 5000))
-    app.run(debug=debug_mode, host='0.0.0.0', port=port, use_reloader=False)
+    app.run(debug=True, host=host, port=listen_port, use_reloader=False)

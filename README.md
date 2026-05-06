@@ -405,6 +405,8 @@ MBA Biotech Dissertation Project
 → Run: python model/train_model.py
 ```
 
+For Streamlit Cloud deployment, this project requires Python 3.11 to maintain compatibility with the saved model artifacts. The repository includes `runtime.txt` to pin the runtime.
+
 ### Dataset Not Found
 ```
 ✗ Error: File not found

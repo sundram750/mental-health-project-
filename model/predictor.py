@@ -12,13 +12,6 @@ from pathlib import Path
 class MentalHealthPredictor:
     """Handles model loading and making predictions."""
     
-    # Compute absolute paths relative to this file's directory
-    _model_dir = os.path.dirname(os.path.abspath(__file__))
-    _DEFAULT_MODEL_PATH = os.path.join(_model_dir, 'mental_health_model.pkl')
-    _DEFAULT_SCALER_PATH = os.path.join(_model_dir, 'mental_health_model_scaler.pkl')
-    _DEFAULT_ENCODER_PATH = os.path.join(_model_dir, 'mental_health_model_encoder.pkl')
-    _DEFAULT_FEATURES_PATH = os.path.join(_model_dir, 'mental_health_model_features.pkl')
-
     def __init__(self, model_path=None,
                  scaler_path=None,
                  encoder_path=None,
@@ -32,10 +25,11 @@ class MentalHealthPredictor:
             encoder_path (str): Path to label encoder pickle file
             features_path (str): Path to feature names pickle file
         """
-        self.model_path = model_path or self._DEFAULT_MODEL_PATH
-        self.scaler_path = scaler_path or self._DEFAULT_SCALER_PATH
-        self.encoder_path = encoder_path or self._DEFAULT_ENCODER_PATH
-        self.features_path = features_path or self._DEFAULT_FEATURES_PATH
+        model_dir = Path(__file__).resolve().parent
+        self.model_path = Path(model_path) if model_path else model_dir / 'mental_health_model.pkl'
+        self.scaler_path = Path(scaler_path) if scaler_path else model_dir / 'mental_health_model_scaler.pkl'
+        self.encoder_path = Path(encoder_path) if encoder_path else model_dir / 'mental_health_model_encoder.pkl'
+        self.features_path = Path(features_path) if features_path else model_dir / 'mental_health_model_features.pkl'
         
         self.model = None
         self.scaler = None
@@ -44,25 +38,53 @@ class MentalHealthPredictor:
         
         self.load_model()
         
+    def _apply_numpy_compatibility_patches(self):
+        """Apply compatibility shims for older numpy pickle formats."""
+        try:
+            import sys
+            import numpy as np
+
+            # Ensure old numpy private package paths resolve correctly.
+            if 'numpy._core' not in sys.modules:
+                sys.modules['numpy._core'] = np.core
+
+            sys.modules.setdefault('numpy._core.numeric', np.core.numeric)
+            sys.modules.setdefault('numpy._core.multiarray', np.core.multiarray)
+            sys.modules.setdefault('numpy._core.umath', np.core.umath)
+            sys.modules.setdefault('numpy._core._multiarray_umath', np.core._multiarray_umath)
+
+            # Older pickles may reference legacy random state bit generator paths.
+            import numpy.random._pickle as np_random_pickle
+            from numpy.random._mt19937 import MT19937
+            np_random_pickle.BitGenerators.setdefault('MT19937', MT19937)
+            np_random_pickle.BitGenerators.setdefault(MT19937, MT19937)
+        except Exception:
+            pass
+
+    def _load_model_components(self):
+        if not self.model_path.exists():
+            raise FileNotFoundError(f"Model file not found: {self.model_path}")
+
+        self.model = joblib.load(self.model_path)
+        self.scaler = joblib.load(self.scaler_path)
+        self.label_encoder = joblib.load(self.encoder_path)
+        self.feature_names = joblib.load(self.features_path)
+
     def load_model(self):
         """Load all model components from pickle files."""
         try:
-            if not os.path.exists(self.model_path):
-                raise FileNotFoundError(f"Model file not found: {self.model_path}")
-            
-            self.model = joblib.load(self.model_path)
-            self.scaler = joblib.load(self.scaler_path)
-            self.label_encoder = joblib.load(self.encoder_path)
-            self.feature_names = joblib.load(self.features_path)
-            
-            print("✓ Model loaded successfully")
-            print(f"✓ Feature names: {self.feature_names}")
-            print(f"✓ Stress level classes: {list(self.label_encoder.classes_)}")
-            
+            self._load_model_components()
+        except (ModuleNotFoundError, ValueError) as e:
+            self._apply_numpy_compatibility_patches()
+            self._load_model_components()
         except FileNotFoundError as e:
             print(f"✗ Error loading model: {e}")
-            print(f"Please train the model first using train_model.py")
+            print("Please train the model first using train_model.py")
             raise
+
+        print("✓ Model loaded successfully")
+        print(f"✓ Feature names: {self.feature_names}")
+        print(f"✓ Stress level classes: {list(self.label_encoder.classes_)}")
             
     def _compute_engineered_features(self, features_dict):
         """
