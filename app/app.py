@@ -10,7 +10,9 @@ from datetime import datetime, timedelta
 import json
 
 # Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+app_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(app_dir)
+sys.path.insert(0, project_dir)
 
 from model.predictor import MentalHealthPredictor
 from utils.mental_load_calculator import MentalLoadCalculator
@@ -20,8 +22,8 @@ from utils.recommendation_engine import RecommendationEngine
 
 # Initialize Flask app
 app = Flask(__name__, 
-            template_folder='app/templates',
-            static_folder='app/static')
+            template_folder=os.path.join(app_dir, 'templates'),
+            static_folder=os.path.join(app_dir, 'static'))
 
 # Initialize all system components
 try:
