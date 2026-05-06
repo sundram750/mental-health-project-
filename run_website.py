@@ -9,7 +9,26 @@ import sys
 import subprocess
 import time
 import webbrowser
+import socket
+import errno
 from pathlib import Path
+
+
+def find_free_port(host, start_port, max_port=None):
+    if max_port is None:
+        max_port = start_port + 20
+    for port in range(start_port, max_port + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((host, port))
+                return port
+            except OSError as exc:
+                if exc.errno in (errno.EADDRINUSE, errno.EACCES):
+                    continue
+                raise
+    raise OSError(f"No available port found in range {start_port}-{max_port}")
+
 
 def print_header():
     """Print beautiful header"""
@@ -64,6 +83,19 @@ def main():
     
     print_status("3/4", "Starting Flask server...")
     time.sleep(0.5)
+
+    host = os.environ.get('FLASK_HOST', '127.0.0.1')
+    start_port = int(os.environ.get('FLASK_PORT', os.environ.get('PORT', 5000)))
+    try:
+        selected_port = find_free_port(host, start_port, start_port + 20)
+    except OSError as e:
+        print(f"    ✗ Could not find available port: {e}")
+        input("\nPress Enter to exit...")
+        sys.exit(1)
+    
+    server_env = os.environ.copy()
+    server_env['FLASK_HOST'] = host
+    server_env['FLASK_PORT'] = str(selected_port)
     
     # Start Flask server in the background
     try:
@@ -72,7 +104,8 @@ def main():
             subprocess.Popen(
                 [sys.executable, 'app/app_enhanced.py'],
                 creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NO_WINDOW,
-                cwd=str(project_dir)
+                cwd=str(project_dir),
+                env=server_env
             )
         else:
             # Linux/Mac
@@ -80,7 +113,8 @@ def main():
                 [sys.executable, 'app/app_enhanced.py'],
                 cwd=str(project_dir),
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
+                env=server_env
             )
         
         print("    ✓ Flask server started\n")
@@ -96,7 +130,7 @@ def main():
     print("    ✓ Server ready\n")
     
     # Open browser
-    url = "http://127.0.0.1:5000"
+    url = f"http://{host}:{selected_port}"
     print("-" * 80)
     print(f"\n✓ Opening website: {url}\n")
     

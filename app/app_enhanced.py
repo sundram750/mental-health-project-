@@ -6,6 +6,8 @@ With 90.28% Accurate Voting Ensemble Model
 from flask import Flask, render_template, request, jsonify, send_from_directory
 import sys
 import os
+import errno
+import socket
 from datetime import datetime, timedelta
 import json
 import numpy as np
@@ -27,6 +29,25 @@ from utils.recommendation_engine import RecommendationEngine
 app = Flask(__name__, 
             template_folder=os.path.join(app_dir, 'templates'),
             static_folder=os.path.join(app_dir, 'static'))
+
+DEFAULT_HOST = os.environ.get('FLASK_HOST', '127.0.0.1')
+DEFAULT_PORT = int(os.environ.get('FLASK_PORT', os.environ.get('PORT', 5000)))
+
+
+def find_free_port(host, start_port, max_port=None):
+    if max_port is None:
+        max_port = start_port + 20
+    for port in range(start_port, max_port + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((host, port))
+                return port
+            except OSError as exc:
+                if exc.errno in (errno.EADDRINUSE, errno.EACCES):
+                    continue
+                raise
+    raise OSError(f"No available port found in range {start_port}-{max_port}")
 
 # Load Model Components
 print("\n[Loading Model Components...]")
@@ -465,8 +486,17 @@ if __name__ == '__main__':
         print(f"\n⚠ WARNING: Model not ready. Please check model files and scikit-learn version.")
         print(f"✓ Recommendation Engine: Active")
         print(f"✓ Advisory System: Active")
+
+    host = os.environ.get('FLASK_HOST', DEFAULT_HOST)
+    start_port = int(os.environ.get('FLASK_PORT', os.environ.get('PORT', DEFAULT_PORT)))
+    try:
+        listen_port = find_free_port(host, start_port, start_port + 20)
+    except OSError as exc:
+        print(f"✗ Could not acquire a free port: {exc}")
+        sys.exit(1)
+
     print(f"\n🌐 Starting web server...")
-    print(f"📱 Access at: http://127.0.0.1:5000")
+    print(f"📱 Access at: http://{host}:{listen_port}")
     print(f"\n{'='*80}\n")
     
-    app.run(debug=True, host='127.0.0.1', port=5000, use_reloader=False)
+    app.run(debug=True, host=host, port=listen_port, use_reloader=False)

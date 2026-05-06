@@ -6,6 +6,8 @@ Integrates all modules for interactive stress monitoring and recommendations
 from flask import Flask, render_template, request, jsonify
 import sys
 import os
+import errno
+import socket
 from datetime import datetime, timedelta
 import json
 
@@ -340,6 +342,22 @@ def create_app():
     return app
 
 
+def find_free_port(host, start_port, max_port=None):
+    if max_port is None:
+        max_port = start_port + 20
+    for port in range(start_port, max_port + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((host, port))
+                return port
+            except OSError as exc:
+                if exc.errno in (errno.EADDRINUSE, errno.EACCES):
+                    continue
+                raise
+    raise OSError(f"No available port found in range {start_port}-{max_port}")
+
+
 if __name__ == '__main__':
     print("="*60)
     print("MENTAL HEALTH MONITORING SYSTEM - FLASK SERVER")
@@ -354,6 +372,14 @@ if __name__ == '__main__':
     print("  GET  /api/model-info      - Model information")
     print("  GET  /api/health          - Health check")
     print("="*60)
-    
-    # Run Flask app
-    app.run(debug=True, host='127.0.0.1', port=5000)
+
+    host = os.environ.get('FLASK_HOST', '127.0.0.1')
+    start_port = int(os.environ.get('FLASK_PORT', os.environ.get('PORT', 5000)))
+    try:
+        listen_port = find_free_port(host, start_port, start_port + 20)
+    except OSError as exc:
+        print(f"✗ Could not acquire a free port: {exc}")
+        sys.exit(1)
+
+    print(f"Starting app on http://{host}:{listen_port}")
+    app.run(debug=True, host=host, port=listen_port)
