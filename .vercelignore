@@ -1,0 +1,39 @@
+# Exclude development files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# Exclude local development files
+run_website.py
+RUN_WEBSITE.bat
+debug_*.py
+generate_*.py
+test_*.py
+STARTUP_GUIDE.txt
+HIGH_ACCURACY_SUMMARY.md
+cleaned_dataset_1500.xlsx
+.devcontainer/
+
+# Exclude original app directory (we're using api/)
+app/
+model/
+utils/
