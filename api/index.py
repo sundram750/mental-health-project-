@@ -1,17 +1,28 @@
 from flask import Flask, request, jsonify, render_template_string
 import sys
 import os
-import json
 from pathlib import Path
 
-# Add current directory to path for imports
+# Add project root to path so model/utils packages are importable
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(current_dir)
 sys.path.insert(0, project_dir)
 
-# Import your modules
-from model.predictor import MentalHealthPredictor
-from utils.recommendation_engine import RecommendationEngine
+# Safely import application modules — any import error is caught so
+# the serverless function can still start and return a meaningful error
+try:
+    from model.predictor import MentalHealthPredictor
+    _predictor_available = True
+except Exception as _import_err:
+    _predictor_available = False
+    print(f"✗ Could not import MentalHealthPredictor: {_import_err}")
+
+try:
+    from utils.recommendation_engine import RecommendationEngine
+    _rec_engine_available = True
+except Exception as _import_err2:
+    _rec_engine_available = False
+    print(f"✗ Could not import RecommendationEngine: {_import_err2}")
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -20,30 +31,59 @@ app = Flask(__name__)
 predictor = None
 recommendation_engine = None
 
+# Mapping from frontend snake_case keys → predictor PascalCase keys
+_KEY_MAP = {
+    'heart_rate':     'Heart_Rate',
+    'hrv':            'HRV',
+    'respiration':    'Respiration',
+    'temperature':    'Skin_Temp',
+    'bp_systolic':    'BP_Systolic',
+    'bp_diastolic':   'BP_Diastolic',
+    'cognitive_state':'Cognitive_State',
+    'emotional_state':'Emotional_State',
+}
+
+def _map_input(data: dict) -> dict:
+    """Remap frontend keys to the keys expected by MentalHealthPredictor."""
+    mapped = {}
+    for front_key, pred_key in _KEY_MAP.items():
+        if front_key in data:
+            mapped[pred_key] = data[front_key]
+    # Also pass through any already-correct keys
+    for k, v in data.items():
+        if k not in _KEY_MAP and k not in mapped:
+            mapped[k] = v
+    return mapped
+
 def initialize_app():
-    """Initialize model and engines"""
+    """Initialize model and engines. Returns True only when the ML model is ready."""
     global predictor, recommendation_engine
-    try:
-        # Initialize predictor with model files in current directory
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        predictor = MentalHealthPredictor(
-            model_path=os.path.join(current_dir, 'mental_health_model.pkl'),
-            scaler_path=os.path.join(current_dir, 'mental_health_model_scaler.pkl'),
-            encoder_path=os.path.join(current_dir, 'mental_health_model_encoder.pkl'),
-            features_path=os.path.join(current_dir, 'mental_health_model_features.pkl')
-        )
-        recommendation_engine = RecommendationEngine()
-        print("✓ Models initialized successfully")
-        return True
-    except Exception as e:
-        print(f"✗ Error initializing models: {e}")
-        # Try to continue without models for now
+    model_ready = False
+
+    # --- load ML model ---
+    if _predictor_available:
+        try:
+            api_dir = os.path.dirname(os.path.abspath(__file__))
+            predictor = MentalHealthPredictor(
+                model_path=os.path.join(api_dir, 'mental_health_model.pkl'),
+                scaler_path=os.path.join(api_dir, 'mental_health_model_scaler.pkl'),
+                encoder_path=os.path.join(api_dir, 'mental_health_model_encoder.pkl'),
+                features_path=os.path.join(api_dir, 'mental_health_model_features.pkl')
+            )
+            model_ready = True
+            print("✓ MentalHealthPredictor loaded")
+        except Exception as e:
+            print(f"✗ MentalHealthPredictor init failed: {e}")
+
+    # --- load recommendation engine ---
+    if _rec_engine_available:
         try:
             recommendation_engine = RecommendationEngine()
-            print("✓ Recommendation engine initialized (models failed)")
-            return False  # Models not ready but engine is
-        except:
-            return False
+            print("✓ RecommendationEngine loaded")
+        except Exception as e:
+            print(f"✗ RecommendationEngine init failed: {e}")
+
+    return model_ready
 
 # Initialize on startup
 MODEL_READY = initialize_app()
@@ -151,9 +191,10 @@ def index():
 
 @app.route('/api/predict', methods=['POST'])
 def predict():
+    # --- fallback mock when model is unavailable ---
     if not MODEL_READY or predictor is None:
         return jsonify({
-            'error': 'Model not ready - using mock prediction',
+            'error': 'Model not ready - using demo prediction',
             'stress_level': 'Moderate-Low',
             'confidence': 75,
             'probabilities': {'Low': 0.1, 'Moderate-Low': 0.4, 'Moderate-High': 0.3, 'High': 0.2},
@@ -161,25 +202,36 @@ def predict():
         })
 
     try:
-        data = request.get_json()
+        raw_data = request.get_json(force=True) or {}
 
-        # Make prediction
-        result = predictor.predict(data)
+        # Remap frontend keys → predictor-expected keys
+        mapped_data = _map_input(raw_data)
 
-        # Get recommendations
-        recommendations = recommendation_engine.get_recommendations(
-            result['stress_level'],
-            result['confidence']
-        )
+        # Call the correct method name: predict_stress_level (not predict)
+        result = predictor.predict_stress_level(mapped_data)
+
+        # Confidence comes back as a 0-1 float; convert to 0-100 integer for UI
+        confidence_pct = round(float(result['confidence']) * 100, 1)
+
+        # Get recommendations (engine may be None if import failed)
+        if recommendation_engine is not None:
+            recommendations = recommendation_engine.get_recommendations(
+                result['stress_level'],
+                result['confidence']
+            )
+        else:
+            recommendations = ['Take a short break', 'Practice deep breathing', 'Stay hydrated']
 
         return jsonify({
             'stress_level': result['stress_level'],
-            'confidence': result['confidence'],
-            'probabilities': result['probabilities'],
+            'confidence': confidence_pct,
+            'probabilities': result.get('probabilities', {}),
             'recommendations': recommendations
         })
 
     except Exception as e:
+        import traceback
+        print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/health', methods=['GET'])
