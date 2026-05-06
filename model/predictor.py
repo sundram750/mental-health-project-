@@ -43,17 +43,21 @@ class MentalHealthPredictor:
         try:
             import sys
             import numpy as np
-            import numpy.core.numeric as numeric
-            import numpy.core.multiarray as multiarray
-            import numpy.core.umath as umath
-            import numpy.core._multiarray_umath as _multiarray_umath
-            sys.modules['numpy._core.numeric'] = numeric
-            sys.modules['numpy._core.multiarray'] = multiarray
-            sys.modules['numpy._core.umath'] = umath
-            sys.modules['numpy._core._multiarray_umath'] = _multiarray_umath
+
+            # Ensure old numpy private package paths resolve correctly.
+            if 'numpy._core' not in sys.modules:
+                sys.modules['numpy._core'] = np.core
+
+            sys.modules.setdefault('numpy._core.numeric', np.core.numeric)
+            sys.modules.setdefault('numpy._core.multiarray', np.core.multiarray)
+            sys.modules.setdefault('numpy._core.umath', np.core.umath)
+            sys.modules.setdefault('numpy._core._multiarray_umath', np.core._multiarray_umath)
+
+            # Older pickles may reference legacy random state bit generator paths.
             import numpy.random._pickle as np_random_pickle
             from numpy.random._mt19937 import MT19937
-            np_random_pickle.BitGenerators[MT19937] = MT19937
+            np_random_pickle.BitGenerators.setdefault('MT19937', MT19937)
+            np_random_pickle.BitGenerators.setdefault(MT19937, MT19937)
         except Exception:
             pass
 

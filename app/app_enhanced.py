@@ -16,8 +16,9 @@ app_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(app_dir)
 sys.path.insert(0, project_dir)
 
-import joblib
 import pandas as pd
+
+from model.predictor import MentalHealthPredictor
 
 # Import recommendation engine
 from utils.recommendation_engine import RecommendationEngine
@@ -29,21 +30,24 @@ app = Flask(__name__,
 
 # Load Model Components
 print("\n[Loading Model Components...]")
+predictor = None
 model = None
 scaler = None
 feature_names = None
 MODEL_READY = False
 
 try:
-    model = joblib.load(os.path.join(project_dir, 'model/mental_health_model.pkl'))
-    scaler = joblib.load(os.path.join(project_dir, 'model/mental_health_model_scaler.pkl'))
-    feature_names = joblib.load(os.path.join(project_dir, 'model/mental_health_model_features.pkl'))
+    predictor = MentalHealthPredictor()
+    model = predictor.model
+    scaler = predictor.scaler
+    feature_names = predictor.feature_names
     print(f"✓ Model loaded (Voting Ensemble, 90.28% accuracy)")
     print(f"✓ Features: {len(feature_names)} total")
     MODEL_READY = True
 except Exception as e:
     print(f"✗ Error loading model: {e}")
     print(f"⚠ WARNING: Model loading failed. Predictions will not be available.")
+    predictor = None
     MODEL_READY = False
 
 # Initialize Recommendation Engine
