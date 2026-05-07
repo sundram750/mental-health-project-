@@ -1,281 +1,556 @@
-from flask import Flask, request, jsonify, render_template_string
+from __future__ import annotations
+
 import os
-import sys
+from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
 
-# ---------------------------------------------------------------------------
-# All dependencies are co-located in the same api/ directory.
-# No sys.path tricks needed — Vercel bundles api/ completely.
-# ---------------------------------------------------------------------------
+from flask import Flask, jsonify, render_template_string, request
 
-# Safely import predictor (local file: api/predictor.py)
 try:
     from predictor import MentalHealthPredictor
-    _predictor_available = True
-except Exception as _e:
-    _predictor_available = False
-    print(f"[WARN] predictor import failed: {_e}")
+    from recommendations import RecommendationEngine
+except ImportError:
+    from api.predictor import MentalHealthPredictor
+    from api.recommendations import RecommendationEngine
 
-# Safely import recommendation engine (local file: api/recommendation_engine.py)
-try:
-    from recommendation_engine import RecommendationEngine
-    _rec_engine_available = True
-except Exception as _e2:
-    _rec_engine_available = False
-    print(f"[WARN] recommendation_engine import failed: {_e2}")
 
-# ---------------------------------------------------------------------------
-# Flask app
-# ---------------------------------------------------------------------------
-app = Flask(__name__)
+# ── Path resolution ──────────────────────────────────────────────────────────
+# Works for both local dev (project root) and Vercel (/var/task/).
+_THIS_FILE = Path(__file__).resolve()
+_API_DIR   = _THIS_FILE.parent          # …/api/
+PROJECT_ROOT = _API_DIR.parent          # …/  (repo root / /var/task)
 
-# Global model instances
-predictor = None
-recommendation_engine = None
+# Allow override via env var for flexibility
+MODEL_DIR = Path(os.environ.get("MODEL_DIR", str(PROJECT_ROOT / "model")))
 
-# Key mapping: frontend snake_case -> predictor PascalCase
-_KEY_MAP = {
-    'heart_rate':      'Heart_Rate',
-    'hrv':             'HRV',
-    'respiration':     'Respiration',
-    'temperature':     'Skin_Temp',
-    'bp_systolic':     'BP_Systolic',
-    'bp_diastolic':    'BP_Diastolic',
-    'cognitive_state': 'Cognitive_State',
-    'emotional_state': 'Emotional_State',
+PUBLIC_STATIC = PROJECT_ROOT / "public" / "static"
+
+MODEL_FILES = {
+    "model":    MODEL_DIR / "mental_health_model.pkl",
+    "scaler":   MODEL_DIR / "mental_health_model_scaler.pkl",
+    "encoder":  MODEL_DIR / "mental_health_model_encoder.pkl",
+    "features": MODEL_DIR / "mental_health_model_features.pkl",
 }
 
-def _map_input(data: dict) -> dict:
-    """Remap frontend keys to keys expected by MentalHealthPredictor."""
-    mapped = {}
-    for front_key, pred_key in _KEY_MAP.items():
-        if front_key in data:
-            mapped[pred_key] = data[front_key]
-    # Pass through already-correct keys
-    for k, v in data.items():
-        if k not in _KEY_MAP and k not in mapped:
-            mapped[k] = v
-    return mapped
+# ── Flask app ─────────────────────────────────────────────────────────────────
+app = Flask(
+    __name__,
+    static_folder=str(PUBLIC_STATIC),
+    static_url_path="/static",
+)
+
+# ── Field definitions ─────────────────────────────────────────────────────────
+REQUIRED_FIELDS = {
+    "heart_rate":     "Heart_Rate",
+    "hrv":            "HRV",
+    "respiration":    "Respiration",
+    "skin_temp":      "Skin_Temp",
+    "bp_systolic":    "BP_Systolic",
+    "bp_diastolic":   "BP_Diastolic",
+    "cognitive_state":"Cognitive_State",
+    "emotional_state":"Emotional_State",
+}
+
+ALIASES = {
+    "temperature":      "skin_temp",
+    "skin_temperature": "skin_temp",
+    "skinTemp":         "skin_temp",
+    "heartRate":        "heart_rate",
+    "bpSystolic":       "bp_systolic",
+    "bpDiastolic":      "bp_diastolic",
+    "cognitiveState":   "cognitive_state",
+    "emotionalState":   "emotional_state",
+    "Heart_Rate":       "heart_rate",
+    "HRV":              "hrv",
+    "Respiration":      "respiration",
+    "Skin_Temp":        "skin_temp",
+    "BP_Systolic":      "bp_systolic",
+    "BP_Diastolic":     "bp_diastolic",
+    "Cognitive_State":  "cognitive_state",
+    "Emotional_State":  "emotional_state",
+}
+
+FIELD_LIMITS = {
+    "heart_rate":     (35, 220),
+    "hrv":            (0, 500),
+    "respiration":    (6, 45),
+    "skin_temp":      (30, 42),
+    "bp_systolic":    (70, 220),
+    "bp_diastolic":   (35, 140),
+    "cognitive_state":(1, 5),
+    "emotional_state":(1, 5),
+}
 
 
-def initialize_app():
-    """Load model + engine. Returns True only when ML model is ready."""
-    global predictor, recommendation_engine
-    model_ready = False
+# ── Cached singletons ─────────────────────────────────────────────────────────
+@lru_cache(maxsize=1)
+def get_predictor() -> MentalHealthPredictor:
+    return MentalHealthPredictor(
+        model_path=MODEL_FILES["model"],
+        scaler_path=MODEL_FILES["scaler"],
+        encoder_path=MODEL_FILES["encoder"],
+        features_path=MODEL_FILES["features"],
+    )
 
-    if _predictor_available:
+
+@lru_cache(maxsize=1)
+def get_recommendation_engine() -> RecommendationEngine:
+    return RecommendationEngine()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def model_files_status() -> dict[str, dict[str, Any]]:
+    return {
+        name: {
+            "path": str(path),
+            "exists": path.exists(),
+            "size_mb": round(path.stat().st_size / (1024 * 1024), 2) if path.exists() else None,
+        }
+        for name, path in MODEL_FILES.items()
+    }
+
+
+def normalize_payload(payload: dict[str, Any]) -> dict[str, float]:
+    normalized: dict[str, Any] = {}
+    for key, value in payload.items():
+        canonical = ALIASES.get(key, key)
+        normalized[canonical] = value
+
+    missing = [field for field in REQUIRED_FIELDS if field not in normalized]
+    if missing:
+        raise ValueError(f"Missing required fields: {', '.join(missing)}")
+
+    parsed: dict[str, float] = {}
+    for field in REQUIRED_FIELDS:
         try:
-            # .pkl files live in api/ alongside this file
-            api_dir = os.path.dirname(os.path.abspath(__file__))
-            predictor = MentalHealthPredictor(
-                model_path=os.path.join(api_dir, 'mental_health_model.pkl'),
-                scaler_path=os.path.join(api_dir, 'mental_health_model_scaler.pkl'),
-                encoder_path=os.path.join(api_dir, 'mental_health_model_encoder.pkl'),
-                features_path=os.path.join(api_dir, 'mental_health_model_features.pkl'),
-            )
-            model_ready = True
-            print("[OK] MentalHealthPredictor loaded")
-        except Exception as e:
-            print(f"[ERROR] MentalHealthPredictor init failed: {e}")
+            value = float(normalized[field])
+        except (TypeError, ValueError):
+            raise ValueError(f"{field} must be a number") from None
 
-    if _rec_engine_available:
-        try:
-            recommendation_engine = RecommendationEngine()
-            print("[OK] RecommendationEngine loaded")
-        except Exception as e:
-            print(f"[ERROR] RecommendationEngine init failed: {e}")
+        lower, upper = FIELD_LIMITS[field]
+        if not lower <= value <= upper:
+            raise ValueError(f"{field} must be between {lower} and {upper}")
 
-    return model_ready
+        parsed[field] = round(value) if field in {"cognitive_state", "emotional_state"} else value
+
+    return parsed
 
 
-MODEL_READY = initialize_app()
+def to_model_features(data: dict[str, float]) -> dict[str, float]:
+    return {model_key: data[field] for field, model_key in REQUIRED_FIELDS.items()}
 
-# ---------------------------------------------------------------------------
-# HTML UI
-# ---------------------------------------------------------------------------
-INDEX_HTML = """
-<!DOCTYPE html>
+
+def clamp(value: float, lower: float = 0.0, upper: float = 100.0) -> float:
+    return max(lower, min(upper, value))
+
+
+def stress_from_label(stress_level: str) -> str:
+    label = str(stress_level).strip().lower()
+    if label in {"low", "calm", "0"}:
+        return "Low"
+    if label in {"high", "stressed", "3"}:
+        return "High"
+    return "Moderate"
+
+
+def condition_from_stress(stress_level: str) -> str:
+    grouped = stress_from_label(stress_level)
+    if grouped == "Low":
+        return "Calm"
+    if grouped == "High":
+        return "Stressed"
+    return "Moderate"
+
+
+def compute_mli(data: dict[str, float]) -> dict[str, Any]:
+    hr       = data["heart_rate"]
+    hrv      = data["hrv"]
+    resp     = data["respiration"]
+    temp     = data["skin_temp"]
+    sys_bp   = data["bp_systolic"]
+    dia_bp   = data["bp_diastolic"]
+    cognitive = data["cognitive_state"]
+    emotional = data["emotional_state"]
+
+    components = {
+        "heart_rate":        clamp((hr - 60) / 70 * 100),
+        "hrv":               clamp((110 - hrv) / 110 * 100),
+        "respiration":       clamp((resp - 12) / 18 * 100),
+        "skin_temperature":  clamp(abs(temp - 36.5) / 2.8 * 100),
+        "blood_pressure":    clamp((((sys_bp - 110) / 55) + ((dia_bp - 72) / 35)) * 50),
+        "cognitive_load":    clamp((cognitive - 1) / 4 * 100),
+        "emotional_load":    clamp((emotional - 1) / 4 * 100),
+    }
+    weights = {
+        "heart_rate": 0.18, "hrv": 0.17, "respiration": 0.12,
+        "skin_temperature": 0.10, "blood_pressure": 0.16,
+        "cognitive_load": 0.13, "emotional_load": 0.14,
+    }
+    score = round(sum(components[name] * weights[name] for name in weights))
+
+    if score <= 30:
+        status, category = "Calm", "Calm"
+    elif score <= 50:
+        status, category = "Monitor", "Moderate-Low"
+    elif score <= 70:
+        status, category = "Action advised", "Moderate-High"
+    else:
+        status, category = "Elevated cognitive load", "Stressed"
+
+    return {
+        "score": int(score),
+        "status": status,
+        "category": category,
+        "components": {key: round(value, 1) for key, value in components.items()},
+    }
+
+
+def build_advisory(condition: str, mli_score: int) -> dict[str, Any]:
+    if condition == "Calm":
+        items    = [
+            "Maintain the current routine and preserve recovery time.",
+            "Continue light physical activity and hydration.",
+            "Use this reading as a stable personal baseline.",
+        ]
+        priority = "Low"
+    elif condition == "Moderate":
+        items    = [
+            "Take a short recovery break before continuing demanding work.",
+            "Reduce multitasking for the next hour.",
+            "Use slow breathing or a brief grounding exercise.",
+        ]
+        priority = "Medium"
+    else:
+        items    = [
+            "Pause high-demand tasks and move into a lower-stimulation setting.",
+            "Use an immediate relaxation protocol for 10 to 15 minutes.",
+            "Consider professional support if this state persists or feels unsafe.",
+        ]
+        priority = "High"
+
+    return {
+        "message": f"{condition} condition detected with Mental Load Index {mli_score}.",
+        "recommendations": items,
+        "implementation_duration": "Immediate",
+        "priority": priority,
+    }
+
+
+def build_warning(condition: str, mli_score: int) -> dict[str, Any]:
+    if condition == "Calm":
+        risk, message, confidence = (
+            "Low",
+            "No immediate escalation signal detected.",
+            0.72,
+        )
+    elif condition == "Moderate":
+        risk, message, confidence = (
+            "Moderate",
+            "If this pattern continues, high stress may develop within 48 to 72 hours.",
+            0.78,
+        )
+    else:
+        risk, message, confidence = (
+            "High",
+            "High burnout risk if the current pattern persists. Immediate intervention is recommended.",
+            0.86,
+        )
+
+    return {
+        "burnout_risk_level":    risk,
+        "burnout_risk_score":    min(100, max(0, int(mli_score))),
+        "escalation_risk":       message,
+        "escalation_confidence": confidence,
+        "timeframe":             "48-72 hours",
+    }
+
+
+def prediction_response(data: dict[str, float]) -> dict[str, Any]:
+    predictor    = get_predictor()
+    prediction   = predictor.predict_stress_level(to_model_features(data))
+    stress_level = str(prediction["stress_level"])
+    condition    = condition_from_stress(stress_level)
+    mli          = compute_mli(data)
+    advisory     = build_advisory(condition, mli["score"])
+    warning      = build_warning(condition, mli["score"])
+    rec_level    = stress_from_label(stress_level)
+    recommendations = get_recommendation_engine().generate(rec_level, mli["score"])
+
+    confidence    = round(float(prediction["confidence"]) * 100, 1)
+    probabilities = {
+        str(label): round(float(prob), 4)
+        for label, prob in prediction["probabilities"].items()
+    }
+
+    return {
+        "timestamp":        now_iso(),
+        "input_summary":    data,
+        "stress_level":     stress_level,
+        "condition":        condition,
+        "confidence":       confidence,
+        "probabilities":    probabilities,
+        "ml_prediction": {
+            "stress_level": stress_level,
+            "condition":    condition,
+            "confidence":   confidence,
+            "probabilities":probabilities,
+        },
+        "mental_load_index": mli,
+        "advisory":          advisory,
+        "early_warning":     warning,
+        "recommendations":   recommendations,
+    }
+
+
+# ── Templates (inline so no template_folder needed on Vercel) ────────────────
+INDEX_TEMPLATE = """
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mental Health Monitor</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        h1 { color: #2c3e50; }
-        .form-group { margin: 12px 0; display: flex; align-items: center; gap: 10px; }
-        label { min-width: 180px; font-weight: bold; color: #555; }
-        input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 5px; width: 160px; }
-        button { padding: 12px 30px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin-top: 10px; }
-        button:hover { background: #2980b9; }
-        .result { margin-top: 25px; padding: 20px; border-radius: 8px; border-left: 5px solid #3498db; background: #f0f8ff; }
-        .result h3 { margin-top: 0; color: #2c3e50; }
-        .error { border-left-color: #e74c3c; background: #fff5f5; }
-        .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-weight: bold; color: white; }
-        .Low { background: #27ae60; }
-        .Moderate-Low { background: #f39c12; }
-        .Moderate-High { background: #e67e22; }
-        .High { background: #e74c3c; }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NeuroPulse Mental Health Monitor</title>
+  <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-    <div class="container">
-        <h1>&#129504; Mental Health Monitoring System</h1>
-        <p>Enter your biometric readings to assess your current stress level.</p>
-        <form id="healthForm">
-            <div class="form-group">
-                <label>Heart Rate (BPM):</label>
-                <input type="number" id="heart_rate" value="75" required>
-            </div>
-            <div class="form-group">
-                <label>HRV (ms):</label>
-                <input type="number" id="hrv" step="0.1" value="45" required>
-            </div>
-            <div class="form-group">
-                <label>Respiration Rate:</label>
-                <input type="number" id="respiration" value="18" required>
-            </div>
-            <div class="form-group">
-                <label>Skin Temperature (°C):</label>
-                <input type="number" id="temperature" step="0.1" value="36.5" required>
-            </div>
-            <div class="form-group">
-                <label>BP Systolic (mmHg):</label>
-                <input type="number" id="bp_systolic" value="120" required>
-            </div>
-            <div class="form-group">
-                <label>BP Diastolic (mmHg):</label>
-                <input type="number" id="bp_diastolic" value="80" required>
-            </div>
-            <div class="form-group">
-                <label>Cognitive State (1-5):</label>
-                <input type="number" id="cognitive" min="1" max="5" value="3" required>
-            </div>
-            <div class="form-group">
-                <label>Emotional State (1-5):</label>
-                <input type="number" id="emotional" min="1" max="5" value="3" required>
-            </div>
-            <button type="submit">Analyze Stress Level</button>
-        </form>
-        <div id="result" style="display:none;"></div>
-    </div>
+  <header class="topbar">
+    <a class="brand" href="/">NeuroPulse</a>
+    <nav aria-label="Primary">
+      <a href="/" aria-current="page">Dashboard</a>
+      <a href="/about">Model</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">IoT-enabled wearable sensor research</p>
+        <h1>Mental health monitoring from biometric and psychological signals</h1>
+        <p class="lede">Enter a current reading to classify stress level, estimate mental load,
+           and generate tiered recommendations using the saved voting ensemble model.</p>
+      </div>
+      <img src="/static/brain.png" alt="Neural brain visualization" class="hero-image">
+    </section>
 
-    <script>
-        document.getElementById('healthForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const resultDiv = document.getElementById('result');
-            resultDiv.style.display = 'block';
-            resultDiv.className = 'result';
-            resultDiv.innerHTML = '<p>Analyzing...</p>';
+    <section class="workspace">
+      <form id="prediction-form" class="panel" autocomplete="off">
+        <div class="panel-head">
+          <h2>Current Reading</h2>
+          <span id="model-pill" class="pill">Model ready check pending</span>
+        </div>
+        <div class="field-grid">
+          <label>Heart rate <input name="heart_rate" type="number" min="35" max="220" value="78" required><span>BPM</span></label>
+          <label>HRV <input name="hrv" type="number" min="0" max="500" value="64" step="0.1" required><span>ms</span></label>
+          <label>Respiration <input name="respiration" type="number" min="6" max="45" value="16" step="0.1" required><span>breaths/min</span></label>
+          <label>Skin temp <input name="skin_temp" type="number" min="30" max="42" value="36.4" step="0.1" required><span>C</span></label>
+          <label>BP systolic <input name="bp_systolic" type="number" min="70" max="220" value="119" required><span>mmHg</span></label>
+          <label>BP diastolic <input name="bp_diastolic" type="number" min="35" max="140" value="78" required><span>mmHg</span></label>
+        </div>
+        <div class="slider-grid">
+          <label>Cognitive fatigue <input name="cognitive_state" type="range" min="1" max="5" value="3"><output>3</output></label>
+          <label>Emotional strain <input name="emotional_state" type="range" min="1" max="5" value="3"><output>3</output></label>
+        </div>
+        <button class="primary-button" type="submit">Analyze stress level</button>
+        <p id="form-error" class="form-error" role="alert"></p>
+      </form>
 
-            const data = {
-                heart_rate:      parseFloat(document.getElementById('heart_rate').value),
-                hrv:             parseFloat(document.getElementById('hrv').value),
-                respiration:     parseFloat(document.getElementById('respiration').value),
-                temperature:     parseFloat(document.getElementById('temperature').value),
-                bp_systolic:     parseInt(document.getElementById('bp_systolic').value),
-                bp_diastolic:    parseInt(document.getElementById('bp_diastolic').value),
-                cognitive_state: parseInt(document.getElementById('cognitive').value),
-                emotional_state: parseInt(document.getElementById('emotional').value)
-            };
+      <section class="panel results-panel" aria-live="polite">
+        <div class="panel-head">
+          <h2>Assessment</h2>
+          <span id="timestamp" class="muted">No reading yet</span>
+        </div>
+        <div id="empty-state" class="empty-state">Submit a reading to see condition, mental load, probabilities, warning status, and recommendations.</div>
+        <div id="result-view" class="result-view" hidden>
+          <div class="result-hero">
+            <div>
+              <span class="muted">Condition</span>
+              <strong id="condition">--</strong>
+            </div>
+            <div class="gauge" style="--score:0">
+              <span id="mli-score">0</span>
+              <small>MLI</small>
+            </div>
+          </div>
+          <div class="summary-grid">
+            <div><span>Stress level</span><strong id="stress-level">--</strong></div>
+            <div><span>Confidence</span><strong id="confidence">--</strong></div>
+            <div><span>Category</span><strong id="mli-category">--</strong></div>
+          </div>
+          <div class="probability-bars" id="probabilities"></div>
+        </div>
+      </section>
+    </section>
 
-            try {
-                const response = await fetch('/api/predict', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                const result = await response.json();
-                const level = result.stress_level || 'Unknown';
-                const levelClass = level.replace(' ', '-');
-                const recs = Array.isArray(result.recommendations)
-                    ? result.recommendations.join(' &bull; ')
-                    : result.recommendations;
-                resultDiv.innerHTML = `
-                    <h3>Analysis Result</h3>
-                    <p><strong>Stress Level:</strong> <span class="badge ${levelClass}">${level}</span></p>
-                    <p><strong>Confidence:</strong> ${result.confidence}%</p>
-                    <p><strong>Recommendations:</strong> ${recs}</p>
-                    ${result.error ? '<p style="color:#888;font-size:0.9em;">&#9432; ' + result.error + '</p>' : ''}
-                `;
-            } catch (error) {
-                resultDiv.className = 'result error';
-                resultDiv.innerHTML = `<p><strong>Error:</strong> ${error.message}</p>`;
-            }
-        });
-    </script>
+    <section id="details" class="details" hidden>
+      <article class="panel">
+        <h2>Advisory</h2>
+        <ul id="advisory-list" class="clean-list"></ul>
+      </article>
+      <article class="panel">
+        <h2>Early Warning</h2>
+        <p id="warning-message" class="warning-text"></p>
+      </article>
+      <article class="panel wide">
+        <div class="panel-head">
+          <h2>Local Trend</h2>
+          <button id="clear-history" class="ghost-button" type="button">Clear</button>
+        </div>
+        <div id="trend-chart" class="trend-chart"></div>
+      </article>
+      <article class="panel wide">
+        <h2>Personalized Recommendations</h2>
+        <div class="recommendation-grid">
+          <section><h3>Natural Interventions</h3><ul id="natural-list" class="clean-list"></ul></section>
+          <section><h3>OTC Options</h3><ul id="otc-list" class="clean-list"></ul></section>
+          <section><h3>Professional Support</h3><ul id="professional-list" class="clean-list"></ul></section>
+        </div>
+        <p class="disclaimer">Research prototype only. This system does not replace professional medical diagnosis or emergency care.</p>
+      </article>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
 </body>
 </html>
 """
 
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-@app.route('/')
-def index():
-    return render_template_string(INDEX_HTML)
+ABOUT_TEMPLATE = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Model Details - NeuroPulse</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">NeuroPulse</a>
+    <nav aria-label="Primary">
+      <a href="/">Dashboard</a>
+      <a href="/about" aria-current="page">Model</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="hero compact">
+      <div>
+        <p class="eyebrow">Saved model retained</p>
+        <h1>Voting ensemble stress classifier</h1>
+        <p class="lede">The deployment keeps the original joblib model artifacts and uses a lighter Vercel-compatible inference wrapper.</p>
+      </div>
+      <img src="/static/brain.png" alt="Neural brain visualization" class="hero-image">
+    </section>
+    <section class="metrics">
+      <article class="panel"><span>Accuracy</span><strong>90.28%</strong></article>
+      <article class="panel"><span>Model type</span><strong>Voting Ensemble</strong></article>
+      <article class="panel"><span>Features</span><strong>16</strong></article>
+      <article class="panel"><span>Training samples</span><strong>1,200</strong></article>
+    </section>
+    <section class="details">
+      <article class="panel wide">
+        <h2>Input Features</h2>
+        <div class="feature-columns">
+          <ul class="clean-list">
+            <li>Heart rate</li><li>Heart rate variability</li>
+            <li>Respiration rate</li><li>Skin temperature</li>
+            <li>Blood pressure systolic</li><li>Blood pressure diastolic</li>
+            <li>Cognitive state</li><li>Emotional state</li>
+          </ul>
+          <ul class="clean-list">
+            <li>Heart rate to HRV ratio</li><li>Average blood pressure</li>
+            <li>Pulse pressure</li><li>Psychological score</li>
+            <li>Heart rate to respiration ratio</li><li>Temperature deviation</li>
+            <li>Normalized HRV</li><li>Heart variability index</li>
+          </ul>
+        </div>
+      </article>
+      <article class="panel image-panel">
+        <h2>Confusion Matrix</h2>
+        <img src="/static/confusion_matrix.png" alt="Confusion matrix">
+      </article>
+      <article class="panel image-panel">
+        <h2>ROC AUC Curve</h2>
+        <img src="/static/roc_auc_curve.png" alt="ROC AUC curve">
+      </article>
+    </section>
+  </main>
+</body>
+</html>
+"""
 
 
-@app.route('/api/predict', methods=['POST'])
-def predict():
-    # Fallback demo response when model failed to load
-    if not MODEL_READY or predictor is None:
-        return jsonify({
-            'stress_level': 'Moderate-Low',
-            'confidence': 75.0,
-            'probabilities': {'Low': 0.1, 'Moderate-Low': 0.4, 'Moderate-High': 0.3, 'High': 0.2},
-            'recommendations': ['Take a short break', 'Practice deep breathing', 'Stay hydrated'],
-            'error': 'Model not ready — showing demo prediction'
-        })
-
-    try:
-        raw_data = request.get_json(force=True) or {}
-        mapped_data = _map_input(raw_data)
-
-        # Call the correct method
-        result = predictor.predict_stress_level(mapped_data)
-
-        # Confidence: 0-1 float -> 0-100 percentage
-        confidence_pct = round(float(result['confidence']) * 100, 1)
-
-        # Get recommendations
-        if recommendation_engine is not None:
-            recs = recommendation_engine.get_recommendations(
-                result['stress_level'], result['confidence']
-            )
-        else:
-            recs = ['Take a short break', 'Practice deep breathing', 'Stay hydrated']
-
-        return jsonify({
-            'stress_level': result['stress_level'],
-            'confidence': confidence_pct,
-            'probabilities': result.get('probabilities', {}),
-            'recommendations': recs
-        })
-
-    except Exception as e:
-        import traceback
-        print(traceback.format_exc())
-        return jsonify({'error': str(e)}), 500
+# ── Routes ────────────────────────────────────────────────────────────────────
+@app.get("/")
+def index() -> str:
+    return render_template_string(INDEX_TEMPLATE)
 
 
-@app.route('/api/health', methods=['GET'])
+@app.get("/about")
+def about() -> str:
+    return render_template_string(ABOUT_TEMPLATE)
+
+
+@app.get("/api/health")
 def health():
+    files = model_files_status()
+    all_present = all(item["exists"] for item in files.values())
     return jsonify({
-        'status': 'healthy' if MODEL_READY else 'degraded',
-        'model_ready': MODEL_READY,
-        'predictor_available': _predictor_available,
-        'rec_engine_available': _rec_engine_available
+        "status":       "ok" if all_present else "degraded",
+        "model_files":  files,
+        "model_loaded": get_predictor.cache_info().currsize > 0,
+        "timestamp":    now_iso(),
     })
 
 
-@app.route('/api/model-info', methods=['GET'])
+@app.get("/api/model-info")
 def model_info():
-    return jsonify({
-        'model_ready': MODEL_READY,
-        'accuracy': '90.28%',
-        'model_type': 'Voting Ensemble',
-        'features': 16,
-        'training_samples': 1200,
-        'cross_val_score': '85.00% (±3.16%)'
-    })
+    try:
+        predictor = get_predictor()
+        return jsonify({
+            "status":       "ready",
+            "model_type":   "Voting Ensemble",
+            "accuracy":     "90.28%",
+            "features":     list(predictor.feature_names),
+            "stress_levels":[str(label) for label in predictor.classes],
+            "model_files":  model_files_status(),
+        })
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc), "model_files": model_files_status()}), 503
+
+
+@app.post("/api/predict")
+def predict():
+    try:
+        payload = request.get_json(force=True, silent=False)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        data = normalize_payload(payload)
+        return jsonify(prediction_response(data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc), "model_files": model_files_status()}), 503
+    except Exception as exc:
+        app.logger.exception("Prediction failed")
+        return jsonify({"error": f"Prediction failed: {exc}"}), 500
+
+
+@app.errorhandler(404)
+def not_found(_error):
+    return jsonify({"error": "Endpoint not found"}), 404
+
+
+@app.errorhandler(500)
+def server_error(_error):
+    return jsonify({"error": "Internal server error"}), 500
+
+
+# Vercel expects the WSGI app to be named `app`
+# Local dev entry point
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="127.0.0.1", port=port, debug=True)
