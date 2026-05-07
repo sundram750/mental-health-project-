@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dev
+.idea/
+.vscode/
+
+# Keep these — they are needed by the model loader:
+# model/mental_health_model.pkl
+# model/mental_health_model_scaler.pkl
+# model/mental_health_model_encoder.pkl
+# model/mental_health_model_features.pkl
+
+# These pkl files are NOT used by predictor.py — safe to exclude if too large:
+# model/smote_transformer.pkl
+# model/knn_imputer.pkl
