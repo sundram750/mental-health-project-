@@ -1,502 +1,432 @@
 """
-Enhanced Mental Health Monitoring System - Flask App
-With 90.28% Accurate Voting Ensemble Model
+Mental Health Monitoring System - Local Development Server
+Uses the saved Voting Ensemble model (90.28% accuracy).
+Run this file directly for local development.
+For Vercel deployment use api/index.py instead.
 """
 
-from flask import Flask, render_template, request, jsonify, send_from_directory
-import sys
-import os
+from __future__ import annotations
+
 import errno
+import os
 import socket
-from datetime import datetime, timedelta
-import json
-import numpy as np
+import sys
+from datetime import datetime
 from pathlib import Path
 
-# Add parent directory to path
-app_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(app_dir)
-sys.path.insert(0, project_dir)
+import numpy as np
+from flask import Flask, jsonify, render_template, request
 
-import pandas as pd
+# ── Path setup ────────────────────────────────────────────────────────────────
+APP_DIR     = Path(__file__).resolve().parent   # …/web/  (or wherever this file lives)
+PROJECT_DIR = APP_DIR.parent                    # project root
+MODEL_DIR   = PROJECT_DIR / "model"
 
-from model.predictor import MentalHealthPredictor
+# Allow the project root on the import path so that
+# "from model.predictor import …" resolves correctly.
+sys.path.insert(0, str(PROJECT_DIR))
 
-# Import recommendation engine
-from utils.recommendation_engine import RecommendationEngine
+from model.predictor import MentalHealthPredictor  # noqa: E402  (after sys.path update)
 
-# Initialize Flask app with correct paths
-app = Flask(__name__, 
-            template_folder=os.path.join(app_dir, 'templates'),
-            static_folder=os.path.join(app_dir, 'static'))
+# RecommendationEngine lives at utils/recommendation_engine.py locally,
+# but the standalone api/recommendations.py is also acceptable.
+try:
+    from utils.recommendation_engine import RecommendationEngine
+except ImportError:
+    # Fallback: use the self-contained module copied into api/
+    sys.path.insert(0, str(PROJECT_DIR / "api"))
+    from recommendations import RecommendationEngine  # type: ignore[no-redef]
 
-DEFAULT_HOST = os.environ.get('FLASK_HOST', '127.0.0.1')
-DEFAULT_PORT = int(os.environ.get('FLASK_PORT', os.environ.get('PORT', 5000)))
+# ── Flask app ─────────────────────────────────────────────────────────────────
+app = Flask(
+    __name__,
+    template_folder=str(APP_DIR / "templates"),
+    static_folder=str(APP_DIR / "static"),
+)
+
+# ── Load model ────────────────────────────────────────────────────────────────
+print("\n[Loading Model Components…]")
+
+MODEL_FILES = {
+    "model":    MODEL_DIR / "mental_health_model.pkl",
+    "scaler":   MODEL_DIR / "mental_health_model_scaler.pkl",
+    "encoder":  MODEL_DIR / "mental_health_model_encoder.pkl",
+    "features": MODEL_DIR / "mental_health_model_features.pkl",
+}
+
+predictor   = None
+MODEL_READY = False
+
+try:
+    predictor = MentalHealthPredictor(
+        model_path   = MODEL_FILES["model"],
+        scaler_path  = MODEL_FILES["scaler"],
+        encoder_path = MODEL_FILES["encoder"],
+        features_path= MODEL_FILES["features"],
+    )
+    print(f"✓ Model loaded  — Voting Ensemble, 90.28% accuracy")
+    print(f"✓ Features      — {len(predictor.feature_names)} total")
+    MODEL_READY = True
+except FileNotFoundError as exc:
+    print(f"✗ Model files missing: {exc}")
+    print("  Put the four .pkl files in  project_root/model/  and restart.")
+except Exception as exc:
+    print(f"✗ Model loading failed: {exc}")
+
+# ── Recommendation engine ─────────────────────────────────────────────────────
+recommendation_engine = RecommendationEngine()
+print("✓ Recommendation Engine initialized")
+
+# ── In-memory session storage ─────────────────────────────────────────────────
+user_sessions: dict[str, list] = {}
 
 
-def find_free_port(host, start_port, max_port=None):
-    if max_port is None:
-        max_port = start_port + 20
-    for port in range(start_port, max_port + 1):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _model_key_map() -> dict[str, str]:
+    """Map snake_case field names → PascalCase model feature names."""
+    return {
+        "heart_rate":     "Heart_Rate",
+        "hrv":            "HRV",
+        "respiration":    "Respiration",
+        "skin_temp":      "Skin_Temp",
+        "bp_systolic":    "BP_Systolic",
+        "bp_diastolic":   "BP_Diastolic",
+        "cognitive_state":"Cognitive_State",
+        "emotional_state":"Emotional_State",
+    }
+
+
+def _normalize_input(raw: dict) -> dict[str, float]:
+    """
+    Accept both snake_case and PascalCase field names.
+    Returns a dict with snake_case keys and float values.
+    """
+    aliases = {v: k for k, v in _model_key_map().items()}  # PascalCase → snake_case
+    normalized: dict[str, float] = {}
+    for key, value in raw.items():
+        canonical = aliases.get(key, key)  # convert PascalCase → snake_case if needed
+        normalized[canonical] = float(value)
+    return normalized
+
+
+def _to_model_features(data: dict[str, float]) -> dict[str, float]:
+    return {pascal: data[snake] for snake, pascal in _model_key_map().items()}
+
+
+def _clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
+    return max(lo, min(hi, value))
+
+
+def _compute_mli(data: dict[str, float]) -> int:
+    """Compute Mental Load Index (0-100) from snake_case data dict."""
+    components = {
+        "heart_rate":       _clamp((data["heart_rate"] - 60) / 70 * 100),
+        "hrv":              _clamp((110 - data["hrv"]) / 110 * 100),
+        "respiration":      _clamp((data["respiration"] - 12) / 18 * 100),
+        "skin_temperature": _clamp(abs(data["skin_temp"] - 36.5) / 2.8 * 100),
+        "blood_pressure":   _clamp((((data["bp_systolic"] - 110) / 55)
+                                    + ((data["bp_diastolic"] - 72) / 35)) * 50),
+        "cognitive_load":   _clamp((data["cognitive_state"] - 1) / 4 * 100),
+        "emotional_load":   _clamp((data["emotional_state"] - 1) / 4 * 100),
+    }
+    weights = {
+        "heart_rate": 0.18, "hrv": 0.17, "respiration": 0.12,
+        "skin_temperature": 0.10, "blood_pressure": 0.16,
+        "cognitive_load": 0.13, "emotional_load": 0.14,
+    }
+    return int(round(sum(components[k] * weights[k] for k in weights)))
+
+
+def _stress_to_rec_level(stress_level: str) -> str:
+    """Map model stress label → recommendation tier (Low / Moderate / High)."""
+    label = stress_level.strip().lower()
+    if label in {"low", "calm"}:
+        return "Low"
+    if label in {"high", "stressed"}:
+        return "High"
+    return "Moderate"
+
+
+def _get_quick_recommendation(stress_label: str) -> dict:
+    """Simple inline quick-tip dict shown in the UI alongside full recommendations."""
+    tips = {
+        "Low": {
+            "title": "✓ Maintain Current State",
+            "primary": "Keep up your current routine — you're managing stress well!",
+            "actions": [
+                "✓ Continue regular exercise",
+                "✓ Maintain current sleep schedule",
+                "✓ Keep healthy eating habits",
+            ],
+        },
+        "Moderate-Low": {
+            "title": "⚠ Light Stress Management",
+            "primary": "Minor stress detected. Take preventive steps.",
+            "actions": [
+                "→ Take 5–10 minute breaks",
+                "→ Practice deep breathing (4-7-8 technique)",
+                "→ Go for a short walk",
+            ],
+        },
+        "Moderate-High": {
+            "title": "⚠ Moderate Stress Response",
+            "primary": "Noticeable stress. Implement stress management.",
+            "actions": [
+                "→ Try meditation (10–15 minutes)",
+                "→ Do light exercise or yoga",
+                "→ Connect with friends/family",
+            ],
+        },
+        "High": {
+            "title": "🚨 High Stress Alert",
+            "primary": "High stress detected. Seek help if persistent.",
+            "actions": [
+                "→ Consider talking to a counsellor",
+                "→ Practice intensive relaxation techniques",
+                "→ Possible medical consultation recommended",
+            ],
+        },
+    }
+    return tips.get(stress_label, tips["Moderate-High"])
+
+
+# ── Core prediction function ──────────────────────────────────────────────────
+
+def predict_stress(raw_input: dict) -> dict:
+    """
+    Run full stress prediction pipeline using the saved ML model.
+    Accepts both snake_case and PascalCase field names.
+    Returns a structured result dict.
+    """
+    if not MODEL_READY or predictor is None:
+        return {"error": "Model not ready. Check that model .pkl files exist in model/"}
+
+    try:
+        data        = _normalize_input(raw_input)
+        model_feats = _to_model_features(data)
+
+        # ── 1. ML model prediction ──────────────────────────────────────────
+        ml_result    = predictor.predict_stress_level(model_feats)
+        stress_level = str(ml_result["stress_level"])      # e.g. "Low", "High", etc.
+        confidence   = round(float(ml_result["confidence"]) * 100, 1)
+        probabilities = {
+            str(k): round(float(v), 4)
+            for k, v in ml_result["probabilities"].items()
+        }
+
+        # ── 2. Mental Load Index ────────────────────────────────────────────
+        mli = _compute_mli(data)
+
+        # ── 3. UI display fields ────────────────────────────────────────────
+        label_lower = stress_level.strip().lower()
+        if label_lower in {"low", "calm"}:
+            emoji = "😌"; color = "#10b981"; category = "LOW"
+        elif label_lower == "high":
+            emoji = "😰"; color = "#ef4444"; category = "HIGH"
+        elif "high" in label_lower:
+            emoji = "😟"; color = "#f97316"; category = "MODERATE-HIGH"
+        else:
+            emoji = "😐"; color = "#f59e0b"; category = "MODERATE-LOW"
+
+        # ── 4. Recommendations ──────────────────────────────────────────────
+        rec_level = _stress_to_rec_level(stress_level)
+        # FIX: correct method name is .generate(), not .generate_recommendations()
+        full_recs = recommendation_engine.generate(rec_level, mli)
+
+        return {
+            "stress_level":    stress_level,
+            "stress_category": category,
+            "emoji":           emoji,
+            "color":           color,
+            "confidence":      confidence,
+            "probabilities":   probabilities,
+            "mental_load_index": mli,
+            "recommendation":  _get_quick_recommendation(stress_level),
+            "recommendations": {
+                "natural_interventions": full_recs.get("natural_interventions", []),
+                "otc_options":           full_recs.get("otc_options", []),
+                "professional_services": full_recs.get("professional_services", []),
+            },
+        }
+
+    except Exception as exc:
+        return {"error": f"Prediction failed: {exc}"}
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.route("/")
+def index():
+    return render_template(
+        "index.html",
+        model_accuracy="90.28%",
+        model_type="Voting Ensemble",
+        features_used=len(predictor.feature_names) if predictor else 16,
+    )
+
+
+@app.route("/about")
+def about():
+    model_metrics = {
+        "accuracy": "90.28%",
+        "precision": "89.5%",
+        "recall": "90.1%",
+        "f1_score": "89.8%",
+        "cv_accuracy": "85.00% ± 3.16%",
+    }
+    algorithms = [
+        {"name": "Extra Trees",         "accuracy": "89.2%", "precision": "88.5%", "recall": "89.0%", "f1": "88.7%"},
+        {"name": "Logistic Regression", "accuracy": "82.1%", "precision": "81.3%", "recall": "82.0%", "f1": "81.6%"},
+        {"name": "Gradient Boosting",   "accuracy": "88.5%", "precision": "87.9%", "recall": "88.3%", "f1": "88.1%"},
+        {"name": "K-Nearest Neighbors", "accuracy": "84.7%", "precision": "83.8%", "recall": "84.5%", "f1": "84.1%"},
+        {"name": "Random Forest",       "accuracy": "87.3%", "precision": "86.7%", "recall": "87.1%", "f1": "86.9%"},
+    ]
+    per_class = {
+        "Low":           {"accuracy": "87%", "samples": 280},
+        "Moderate-Low":  {"accuracy": "88%", "samples": 300},
+        "Moderate-High": {"accuracy": "91%", "samples": 320},
+        "High":          {"accuracy": "96%", "samples": 300},
+    }
+    return render_template(
+        "about.html",
+        model_metrics=model_metrics,
+        algorithms=algorithms,
+        per_class=per_class,
+        model_accuracy="90.28%",
+        model_type="Voting Ensemble",
+    )
+
+
+@app.route("/api/predict", methods=["POST"])
+def api_predict():
+    try:
+        data = request.get_json(force=True, silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+
+        required = list(_model_key_map().keys()) + list(_model_key_map().values())
+        has_snake  = all(f in data for f in _model_key_map().keys())
+        has_pascal = all(f in data for f in _model_key_map().values())
+
+        if not has_snake and not has_pascal:
+            missing = [f for f in _model_key_map().keys() if f not in data]
+            return jsonify({"error": f"Missing required fields: {missing}"}), 400
+
+        result = predict_stress(data)
+
+        if "error" in result:
+            return jsonify(result), 500
+
+        session_id = data.get("session_id")
+        if session_id:
+            user_sessions.setdefault(session_id, []).append({
+                "timestamp": datetime.now().isoformat(),
+                "data": result,
+            })
+
+        return jsonify(result)
+
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/health", methods=["GET"])
+def health_check():
+    return jsonify({
+        "status":      "ok" if MODEL_READY else "degraded",
+        "model_ready": MODEL_READY,
+        "timestamp":   datetime.now().isoformat(),
+        "accuracy":    "90.28%",
+    })
+
+
+@app.route("/api/model-info", methods=["GET"])
+def model_info():
+    return jsonify({
+        "model_type": "Voting Ensemble (5 algorithms)",
+        "accuracy": {
+            "test_set":          "90.28%",
+            "cross_validation":  "85.00% ± 3.16%",
+        },
+        "algorithms": [
+            "Extra Trees", "Logistic Regression", "Gradient Boosting",
+            "K-Nearest Neighbors", "Random Forest",
+        ],
+        "features":         len(predictor.feature_names) if predictor else 16,
+        "training_samples": 1200,
+        "stress_levels":    [str(c) for c in predictor.classes] if predictor else [],
+        "per_class_accuracy": {
+            "Low":           "87%",
+            "Moderate-Low":  "88%",
+            "Moderate-High": "91%",
+            "High":          "96%",
+        },
+    })
+
+
+@app.route("/api/recommendations", methods=["POST"])
+def get_recommendations():
+    try:
+        data         = request.get_json(force=True, silent=True) or {}
+        stress_level = str(data.get("stress_level", "Moderate"))
+        mli_score    = data.get("mli_score")
+        rec_level    = _stress_to_rec_level(stress_level)
+        # FIX: correct method name
+        result       = recommendation_engine.generate(rec_level, mli_score)
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.errorhandler(404)
+def not_found(_error):
+    return jsonify({"error": "Not found"}), 404
+
+
+@app.errorhandler(500)
+def server_error(_error):
+    return jsonify({"error": "Server error"}), 500
+
+
+# ── Port helpers ──────────────────────────────────────────────────────────────
+
+def find_free_port(host: str, start: int, stop: int = None) -> int:
+    stop = stop or start + 20
+    for port in range(start, stop + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                sock.bind((host, port))
+                s.bind((host, port))
                 return port
             except OSError as exc:
                 if exc.errno in (errno.EADDRINUSE, errno.EACCES):
                     continue
                 raise
-    raise OSError(f"No available port found in range {start_port}-{max_port}")
+    raise OSError(f"No free port found in {start}–{stop}")
 
-# Load Model Components
-print("\n[Loading Model Components...]")
-predictor = None
-model = None
-scaler = None
-feature_names = None
-MODEL_READY = False
 
-try:
-    predictor = MentalHealthPredictor()
-    model = predictor.model
-    scaler = predictor.scaler
-    feature_names = predictor.feature_names
-    print(f"✓ Model loaded (Voting Ensemble, 90.28% accuracy)")
-    print(f"✓ Features: {len(feature_names)} total")
-    MODEL_READY = True
-except Exception as e:
-    print(f"✗ Error loading model: {e}")
-    print(f"⚠ WARNING: Model loading failed. Predictions will not be available.")
-    predictor = None
-    MODEL_READY = False
+# ── Entry point ───────────────────────────────────────────────────────────────
 
-# Initialize Recommendation Engine
-recommendation_engine = RecommendationEngine()
-print("✓ Recommendation Engine initialized")
-
-# Session Storage
-user_sessions = {}
-
-class UserSession:
-    def __init__(self, session_id):
-        self.session_id = session_id
-        self.predictions = []
-        self.created_at = datetime.now()
-        
-    def add_prediction(self, data):
-        self.predictions.append({
-            'timestamp': datetime.now().isoformat(),
-            'data': data
-        })
-
-def compute_engineered_features(data):
-    """Compute engineered features from raw input"""
-    features = data.copy()
-    
-    # 8 engineered features
-    features['HR_HRV_Ratio'] = float(data['Heart_Rate']) / (float(data['HRV']) + 1)
-    features['BP_Average'] = (float(data['BP_Systolic']) + float(data['BP_Diastolic'])) / 2
-    features['BP_Diff'] = float(data['BP_Systolic']) - float(data['BP_Diastolic'])
-    features['Psych_Score'] = float(data['Cognitive_State']) + float(data['Emotional_State'])
-    features['HR_Resp_Ratio'] = float(data['Heart_Rate']) / (float(data['Respiration']) + 0.1)
-    features['Temp_Deviation'] = abs(float(data['Skin_Temp']) - 36.5)
-    features['HRV_Norm'] = float(data['HRV']) / 500.0  # Normalized to 0-1
-    features['HR_Variability'] = features['HR_HRV_Ratio'] * features['Psych_Score']
-    
-    return features
-
-def predict_stress(input_data):
-    """Predict stress level from input features"""
-    # Use deterministic threshold rules (no model probabilities or confidence)
-    try:
-        # Compute features for any necessary thresholds
-        augmented_data = compute_engineered_features(input_data)
-
-        # Helper: psychological status based on Cognitive_State & Emotional_State
-        def psychological_status(d):
-            c = int(float(d.get('Cognitive_State', 3)))
-            e = int(float(d.get('Emotional_State', 3)))
-            # both in 1-2 => Calm; both ==3 => Moderate; both in 4-5 => Stressed
-            if (c in (1,2)) and (e in (1,2)):
-                return 'Calm'
-            if (c == 3) and (e == 3):
-                return 'Moderate'
-            if (c in (4,5)) and (e in (4,5)):
-                return 'Stressed'
-            # Mixed values -> treat as Moderate
-            return 'Moderate'
-
-        psych = psychological_status(input_data)
-
-        # Helper: categorize physiological metrics
-        phys = {}
-        highs = 0; moderates = 0; normals = 0
-
-        # Heart Rate
-        hr = float(input_data.get('Heart_Rate', 75))
-        if hr <= 100:
-            phys['heart_rate'] = 'normal'; normals += 1
-        elif 101 <= hr <= 115:
-            phys['heart_rate'] = 'moderate'; moderates += 1
-        else:
-            phys['heart_rate'] = 'high'; highs += 1
-
-        # HRV (ms)
-        hrv = float(input_data.get('HRV', 50))
-        if hrv >= 50:
-            phys['hrv'] = 'normal'; normals += 1
-        elif 30 <= hrv < 50:
-            phys['hrv'] = 'moderate'; moderates += 1
-        else:
-            phys['hrv'] = 'high'; highs += 1
-
-        # Respiration (breaths/min)
-        resp = float(input_data.get('Respiration', 16))
-        if 12 <= resp <= 20:
-            phys['respiration'] = 'normal'; normals += 1
-        elif 21 <= resp <= 24:
-            phys['respiration'] = 'moderate'; moderates += 1
-        else:
-            # treat values outside ranges: <=11 consider normal-ish, >24 high
-            if resp > 24:
-                phys['respiration'] = 'high'; highs += 1
-            else:
-                phys['respiration'] = 'normal'; normals += 1
-
-        # Skin Temperature (°C)
-        temp = float(input_data.get('Skin_Temp', 36.5))
-        # Normal 36.1–37.2
-        if 36.1 <= temp <= 37.2:
-            phys['skin_temp'] = 'normal'; normals += 1
-        elif 35.5 <= temp < 36.1 or 37.3 <= temp <= 38.0:
-            phys['skin_temp'] = 'moderate'; moderates += 1
-        else:
-            phys['skin_temp'] = 'high'; highs += 1
-
-        # BP Systolic
-        bp_sys = float(input_data.get('BP_Systolic', 120))
-        if 90 <= bp_sys <= 120:
-            phys['bp_systolic'] = 'normal'; normals += 1
-        elif 121 <= bp_sys <= 140:
-            phys['bp_systolic'] = 'moderate'; moderates += 1
-        else:
-            phys['bp_systolic'] = 'high'; highs += 1
-
-        # BP Diastolic
-        bp_dia = float(input_data.get('BP_Diastolic', 80))
-        if 60 <= bp_dia <= 80:
-            phys['bp_diastolic'] = 'normal'; normals += 1
-        elif 81 <= bp_dia <= 90:
-            phys['bp_diastolic'] = 'moderate'; moderates += 1
-        else:
-            phys['bp_diastolic'] = 'high'; highs += 1
-
-        # Determine final condition by rules
-        final_condition = 'Moderate'
-        # Rule: stressed overrides
-        if psych == 'Stressed' or highs >= 2:
-            final_condition = 'Stressed'
-        # Rule: calm only if majority physiological normal AND psych Calm
-        elif psych == 'Calm' and normals >= 4:
-            final_condition = 'Calm'
-        # Rule: moderate if any physiological moderate OR psych Moderate
-        elif psych == 'Moderate' or moderates >= 1:
-            final_condition = 'Moderate'
-        else:
-            final_condition = 'Moderate'
-
-        # Map final_condition to legacy stress_level labels to preserve frontend mapping
-        if final_condition == 'Calm':
-            stress_level = 'Low'
-            category = 'LOW'
-            emoji = '😌'
-            color = '#10b981'
-            recommend_key = 0
-        elif final_condition == 'Moderate':
-            # choose Moderate-Low or Moderate-High depending on moderate/high counts
-            if highs >= 1 or moderates >= 2:
-                stress_level = 'Moderate-High'
-                category = 'MODERATE-HIGH'
-            else:
-                stress_level = 'Moderate-Low'
-                category = 'MODERATE-LOW'
-            emoji = '😐'
-            color = '#f59e0b'
-            recommend_key = 2
-        else:
-            stress_level = 'High'
-            category = 'HIGH'
-            emoji = '😰'
-            color = '#ef4444'
-            recommend_key = 3
-
-        # Compute a deterministic Mental Load Index within the correct band
-        # Metric points: normal=0, moderate=1, high=2 for 6 phys metrics (0-12)
-        metric_points = (0 * normals) + (1 * moderates) + (2 * highs)
-        # psychological weight: Calm=0, Moderate=1, Stressed=2
-        psych_points = 0 if psych == 'Calm' else (1 if psych == 'Moderate' else 2)
-        normalized = (metric_points + psych_points) / (12 + 2)
-        raw_score = normalized * 100.0
-
-        # Map to band
-        if final_condition == 'Calm':
-            mli = int(max(0, min(30, round(5 + raw_score * 0.25))))
-        elif final_condition == 'Moderate':
-            # map into 31-70
-            mli = int(max(31, min(70, round(31 + (raw_score * 0.39)))))
-        else:
-            # Stressed -> 71-100
-            mli = int(max(71, min(100, round(71 + (raw_score * 0.29)))))
-
-        # Ensure ranges
-        mli = max(0, min(100, mli))
-
-        # Map stress_level for recommendations engine (Low, Moderate, High)
-        rec_stress_level = 'Low' if final_condition == 'Calm' else ('High' if final_condition == 'Stressed' else 'Moderate')
-
-        # Get full recommendations from engine
-        full_recommendations = recommendation_engine.generate_recommendations(rec_stress_level, mli)
-
-        # Return structured result (no probabilities/confidence)
-        return {
-            'stress_level': stress_level,
-            'stress_category': category,
-            'emoji': emoji,
-            'color': color,
-            'condition': final_condition,
-            'mental_load_index': mli,
-            'recommendation': get_recommendation(recommend_key, input_data),
-            'recommendations': {
-                'natural_interventions': full_recommendations['natural_interventions'],
-                'otc_options': full_recommendations['otc_options'],
-                'professional_services': full_recommendations['professional_services']
-            }
-        }
-    except Exception as e:
-        return {'error': f'Prediction error: {str(e)}'}
-
-def get_recommendation(stress_level, input_data):
-    """Generate recommendation based on stress level"""
-    hr = float(input_data['Heart_Rate'])
-    hrv = float(input_data['HRV'])
-    resp = float(input_data['Respiration'])
-    
-    recommendations = {
-        0: {
-            'title': '✓ Maintain Current State',
-            'primary': 'Keep up your current routine - you\'re managing stress well!',
-            'actions': [
-                '✓ Continue regular exercise',
-                '✓ Maintain current sleep schedule',
-                '✓ Keep healthy eating habits'
-            ]
-        },
-        1: {
-            'title': '⚠ Light Stress Management',
-            'primary': 'Minor stress detected. Take preventive steps.',
-            'actions': [
-                '→ Take 5-10 minute breaks',
-                '→ Practice deep breathing (4-7-8 technique)',
-                '→ Go for a short walk'
-            ]
-        },
-        2: {
-            'title': '⚠ Moderate Stress Response',
-            'primary': 'Noticeable stress. Implement stress management.',
-            'actions': [
-                '→ Try meditation (10-15 minutes)',
-                '→ Do light exercise or yoga',
-                '→ Connect with friends/family',
-                '→ Take a warm bath or shower'
-            ]
-        },
-        3: {
-            'title': '🚨 High Stress Alert',
-            'primary': 'High stress detected. Seek help if persistent.',
-            'actions': [
-                '→ Consider talking to a counselor',
-                '→ Practice intensive relaxation techniques',
-                '→ Possible medical consultation recommended',
-                '→ Avoid stressful activities'
-            ]
-        }
-    }
-    
-    return recommendations.get(stress_level, {})
-
-# ============================================================================
-# ROUTES
-# ============================================================================
-
-@app.route('/')
-def index():
-    """Main dashboard page"""
-    return render_template('index.html', 
-                          model_accuracy='90.28%',
-                          model_type='Voting Ensemble',
-                          features_used=len(feature_names) if feature_names else 16)
-
-@app.route('/about')
-def about():
-    """About the System page"""
-    model_metrics = {
-        'accuracy': '90.28%',
-        'precision': '89.5%',
-        'recall': '90.1%',
-        'f1_score': '89.8%',
-        'cv_accuracy': '85.00% ± 3.16%'
-    }
-    
-    algorithms = [
-        {'name': 'Extra Trees', 'accuracy': '89.2%', 'precision': '88.5%', 'recall': '89.0%', 'f1': '88.7%'},
-        {'name': 'Logistic Regression', 'accuracy': '82.1%', 'precision': '81.3%', 'recall': '82.0%', 'f1': '81.6%'},
-        {'name': 'Gradient Boosting', 'accuracy': '88.5%', 'precision': '87.9%', 'recall': '88.3%', 'f1': '88.1%'},
-        {'name': 'K-Nearest Neighbors', 'accuracy': '84.7%', 'precision': '83.8%', 'recall': '84.5%', 'f1': '84.1%'},
-        {'name': 'Random Forest', 'accuracy': '87.3%', 'precision': '86.7%', 'recall': '87.1%', 'f1': '86.9%'}
-    ]
-    
-    per_class = {
-        'Low': {'accuracy': '87%', 'samples': 280},
-        'Moderate-Low': {'accuracy': '88%', 'samples': 300},
-        'Moderate-High': {'accuracy': '91%', 'samples': 320},
-        'High': {'accuracy': '96%', 'samples': 300}
-    }
-    
-    return render_template('about.html',
-                          model_metrics=model_metrics,
-                          algorithms=algorithms,
-                          per_class=per_class,
-                          model_accuracy='90.28%',
-                          model_type='Voting Ensemble')
-
-@app.route('/api/predict', methods=['POST'])
-def api_predict():
-    """API endpoint for stress prediction"""
-    try:
-        data = request.json
-        
-        # Validate input - accept both snake_case and PascalCase
-        required_fields_snake = ['heart_rate', 'hrv', 'respiration', 'skin_temp',
-                                 'bp_systolic', 'bp_diastolic', 'cognitive_state', 'emotional_state']
-        required_fields_pascal = ['Heart_Rate', 'HRV', 'Respiration', 'Skin_Temp',
-                                  'BP_Systolic', 'BP_Diastolic', 'Cognitive_State', 'Emotional_State']
-        
-        # Check if we have snake_case fields and convert to PascalCase
-        if all(field in data for field in required_fields_snake):
-            data = {
-                'Heart_Rate': data['heart_rate'],
-                'HRV': data['hrv'],
-                'Respiration': data['respiration'],
-                'Skin_Temp': data['skin_temp'],
-                'BP_Systolic': data['bp_systolic'],
-                'BP_Diastolic': data['bp_diastolic'],
-                'Cognitive_State': data['cognitive_state'],
-                'Emotional_State': data['emotional_state']
-            }
-        elif not all(field in data for field in required_fields_pascal):
-            return jsonify({'error': 'Missing required fields'}), 400
-        
-        # Make prediction
-        result = predict_stress(data)
-        
-        # Store in session if session_id provided
-        if 'session_id' in data:
-            session_id = data['session_id']
-            if session_id not in user_sessions:
-                user_sessions[session_id] = UserSession(session_id)
-            user_sessions[session_id].add_prediction(result)
-        
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        'status': 'ok',
-        'model_ready': MODEL_READY,
-        'timestamp': datetime.now().isoformat(),
-        'accuracy': '90.28%'
-    })
-
-@app.route('/api/recommendations', methods=['POST'])
-def get_recommendations():
-    """Get detailed recommendations"""
-    try:
-        data = request.json
-        stress_level = data.get('stress_level', 0)
-        
-        recommendations = get_recommendation(stress_level, data)
-        
-        return jsonify(recommendations)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/model-info', methods=['GET'])
-def model_info():
-    """Get model information"""
-    return jsonify({
-        'model_type': 'Voting Ensemble (5 algorithms)',
-        'accuracy': {
-            'test_set': '90.28%',
-            'cross_validation': '85.00% ± 3.16%'
-        },
-        'algorithms': ['Extra Trees', 'Logistic Regression', 'Gradient Boosting', 
-                      'K-Nearest Neighbors', 'Random Forest'],
-        'features': len(feature_names) if feature_names else 16,
-        'training_samples': 1200,
-        'stress_levels': ['Low', 'Moderate-Low', 'Moderate-High', 'High'],
-        'per_class_accuracy': {
-            'Low': '87%',
-            'Moderate-Low': '88%',
-            'Moderate-High': '91%',
-            'High': '96%'
-        }
-    })
-
-# ============================================================================
-# ERROR HANDLERS
-# ============================================================================
-
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({'error': 'Not found'}), 404
-
-@app.errorhandler(500)
-def server_error(error):
-    return jsonify({'error': 'Server error'}), 500
-
-# ============================================================================
-# STARTUP
-# ============================================================================
-
-if __name__ == '__main__':
-    print("\n" + "="*80)
-    print("🧠 MENTAL HEALTH MONITORING SYSTEM - LAUNCHING")
-    print("="*80)
+if __name__ == "__main__":
+    print("\n" + "=" * 70)
+    print("  MENTAL HEALTH MONITORING SYSTEM — LOCAL DEV SERVER")
+    print("=" * 70)
     if MODEL_READY:
-        print(f"\n✓ Model Accuracy: 90.28%")
-        print(f"✓ Model Type: Voting Ensemble (5 algorithms)")
-        print(f"✓ Features: {len(feature_names) if feature_names else 16}")
-        print(f"✓ Training Samples: 1,200")
-        print(f"✓ Cross-Val Score: 85.00% (±3.16%)")
+        print(f"  ✓ Model:        Voting Ensemble  (90.28% accuracy)")
+        print(f"  ✓ Features:     {len(predictor.feature_names)}")
+        print(f"  ✓ Classes:      {predictor.classes}")
     else:
-        print(f"\n⚠ WARNING: Model not ready. Please check model files and scikit-learn version.")
-        print(f"✓ Recommendation Engine: Active")
-        print(f"✓ Advisory System: Active")
+        print("  ⚠  Model not ready — predictions will return an error.")
+    print("=" * 70 + "\n")
 
-    host = os.environ.get('FLASK_HOST', DEFAULT_HOST)
-    start_port = int(os.environ.get('FLASK_PORT', os.environ.get('PORT', DEFAULT_PORT)))
+    host = os.environ.get("FLASK_HOST", "127.0.0.1")
+    port = int(os.environ.get("FLASK_PORT", os.environ.get("PORT", 5000)))
     try:
-        listen_port = find_free_port(host, start_port, start_port + 20)
+        port = find_free_port(host, port)
     except OSError as exc:
         print(f"✗ Could not acquire a free port: {exc}")
         sys.exit(1)
 
-    print(f"\n🌐 Starting web server...")
-    print(f"📱 Access at: http://{host}:{listen_port}")
-    print(f"\n{'='*80}\n")
-    
-    app.run(debug=True, host=host, port=listen_port, use_reloader=False)
+    print(f"  Access at: http://{host}:{port}\n")
+    app.run(debug=True, host=host, port=port, use_reloader=False)
