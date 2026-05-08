@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Model Details - NeuroPulse</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">NeuroPulse</a>
+    <nav aria-label="Primary">
+      <a href="/">Dashboard</a>
+      <a href="/about" aria-current="page">Model</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="hero compact">
+      <div>
+        <p class="eyebrow">Saved model retained</p>
+        <h1>Voting ensemble stress classifier</h1>
+        <p class="lede">The deployment keeps the original joblib model artifacts and uses a lighter Vercel-compatible inference wrapper.</p>
+      </div>
+      <img src="/static/brain.png" alt="Neural brain visualization" class="hero-image">
+    </section>
+
+    <section class="metrics">
+      <article class="panel"><span>Accuracy</span><strong>90.28%</strong></article>
+      <article class="panel"><span>Model type</span><strong>Voting Ensemble</strong></article>
+      <article class="panel"><span>Features</span><strong>16</strong></article>
+      <article class="panel"><span>Training samples</span><strong>1,200</strong></article>
+    </section>
+
+    <section class="details">
+      <article class="panel wide">
+        <h2>Input Features</h2>
+        <div class="feature-columns">
+          <ul class="clean-list">
+            <li>Heart rate</li>
+            <li>Heart rate variability</li>
+            <li>Respiration rate</li>
+            <li>Skin temperature</li>
+            <li>Blood pressure systolic</li>
+            <li>Blood pressure diastolic</li>
+            <li>Cognitive state</li>
+            <li>Emotional state</li>
+          </ul>
+          <ul class="clean-list">
+            <li>Heart rate to HRV ratio</li>
+            <li>Average blood pressure</li>
+            <li>Pulse pressure</li>
+            <li>Psychological score</li>
+            <li>Heart rate to respiration ratio</li>
+            <li>Temperature deviation</li>
+            <li>Normalized HRV</li>
+            <li>Heart variability index</li>
+          </ul>
+        </div>
+      </article>
+      <article class="panel image-panel">
+        <h2>Confusion Matrix</h2>
+        <img src="/static/confusion_matrix.png" alt="Confusion matrix for the stress classifier">
+      </article>
+      <article class="panel image-panel">
+        <h2>ROC AUC Curve</h2>
+        <img src="/static/roc_auc_curve.png" alt="ROC AUC curve for the stress classifier">
+      </article>
+    </section>
+  </main>
+</body>
+</html>

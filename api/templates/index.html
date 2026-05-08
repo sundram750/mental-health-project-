@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NeuroPulse Mental Health Monitor</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">NeuroPulse</a>
+    <nav aria-label="Primary">
+      <a href="/" aria-current="page">Dashboard</a>
+      <a href="/about">Model</a>
+    </nav>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">IoT-enabled wearable sensor research</p>
+        <h1>Mental health monitoring from biometric and psychological signals</h1>
+        <p class="lede">Enter a current reading to classify stress level, estimate mental load, and generate tiered recommendations using the saved voting ensemble model.</p>
+      </div>
+      <img src="/static/brain.png" alt="Neural brain visualization" class="hero-image">
+    </section>
+
+    <section class="workspace">
+      <form id="prediction-form" class="panel" autocomplete="off">
+        <div class="panel-head">
+          <h2>Current Reading</h2>
+          <span id="model-pill" class="pill">Model ready check pending</span>
+        </div>
+
+        <div class="field-grid">
+          <label>Heart rate <input name="heart_rate" type="number" min="35" max="220" value="78" required><span>BPM</span></label>
+          <label>HRV <input name="hrv" type="number" min="0" max="500" value="64" step="0.1" required><span>ms</span></label>
+          <label>Respiration <input name="respiration" type="number" min="6" max="45" value="16" step="0.1" required><span>breaths/min</span></label>
+          <label>Skin temp <input name="skin_temp" type="number" min="30" max="42" value="36.4" step="0.1" required><span>C</span></label>
+          <label>BP systolic <input name="bp_systolic" type="number" min="70" max="220" value="119" required><span>mmHg</span></label>
+          <label>BP diastolic <input name="bp_diastolic" type="number" min="35" max="140" value="78" required><span>mmHg</span></label>
+        </div>
+
+        <div class="slider-grid">
+          <label>Cognitive fatigue <input name="cognitive_state" type="range" min="1" max="5" value="3"><output>3</output></label>
+          <label>Emotional strain <input name="emotional_state" type="range" min="1" max="5" value="3"><output>3</output></label>
+        </div>
+
+        <button class="primary-button" type="submit">Analyze stress level</button>
+        <p id="form-error" class="form-error" role="alert"></p>
+      </form>
+
+      <section class="panel results-panel" aria-live="polite">
+        <div class="panel-head">
+          <h2>Assessment</h2>
+          <span id="timestamp" class="muted">No reading yet</span>
+        </div>
+        <div id="empty-state" class="empty-state">Submit a reading to see condition, mental load, probabilities, warning status, and recommendations.</div>
+        <div id="result-view" class="result-view" hidden>
+          <div class="result-hero">
+            <div>
+              <span class="muted">Condition</span>
+              <strong id="condition">--</strong>
+            </div>
+            <div class="gauge" style="--score:0">
+              <span id="mli-score">0</span>
+              <small>MLI</small>
+            </div>
+          </div>
+          <div class="summary-grid">
+            <div><span>Stress level</span><strong id="stress-level">--</strong></div>
+            <div><span>Confidence</span><strong id="confidence">--</strong></div>
+            <div><span>Category</span><strong id="mli-category">--</strong></div>
+          </div>
+          <div class="probability-bars" id="probabilities"></div>
+        </div>
+      </section>
+    </section>
+
+    <section id="details" class="details" hidden>
+      <article class="panel">
+        <h2>Advisory</h2>
+        <ul id="advisory-list" class="clean-list"></ul>
+      </article>
+      <article class="panel">
+        <h2>Early Warning</h2>
+        <p id="warning-message" class="warning-text"></p>
+      </article>
+      <article class="panel wide">
+        <div class="panel-head">
+          <h2>Local Trend</h2>
+          <button id="clear-history" class="ghost-button" type="button">Clear</button>
+        </div>
+        <div id="trend-chart" class="trend-chart"></div>
+      </article>
+      <article class="panel wide">
+        <h2>Personalized Recommendations</h2>
+        <div class="recommendation-grid">
+          <section>
+            <h3>Natural Interventions</h3>
+            <ul id="natural-list" class="clean-list"></ul>
+          </section>
+          <section>
+            <h3>OTC Options</h3>
+            <ul id="otc-list" class="clean-list"></ul>
+          </section>
+          <section>
+            <h3>Professional Support</h3>
+            <ul id="professional-list" class="clean-list"></ul>
+          </section>
+        </div>
+        <p class="disclaimer">Research prototype only. This system does not replace professional medical diagnosis or emergency care.</p>
+      </article>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
